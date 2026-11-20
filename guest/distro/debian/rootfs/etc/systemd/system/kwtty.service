@@ -3,7 +3,8 @@
 
 [Unit]
 Description=Unkernel terminal and socket bridge
-After=kw-net.service
+After=kw-net.service kw-grow-data.service
+Wants=kw-grow-data.service
 
 [Service]
 ExecStart=/usr/bin/kwtty serve

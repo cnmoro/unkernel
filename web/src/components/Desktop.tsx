@@ -47,7 +47,7 @@ function desktopChannel(socket: GuestSocket) {
 	return { channel, read };
 }
 
-export function Desktop({ onClose }: { onClose: () => void }) {
+export function Desktop() {
 	const screen = useRef<HTMLDivElement>(null);
 	const [status, setStatus] = useState("Starting Xfce…");
 	useEffect(() => {
@@ -76,9 +76,12 @@ export function Desktop({ onClose }: { onClose: () => void }) {
 				const rfb = new RFB(screen.current!, channel);
 				close = () => { rfb.disconnect(); channel.close(); };
 				rfb.scaleViewport = true;
-				rfb.addEventListener("connect", () => setStatus(""));
+				rfb.addEventListener("connect", () => {
+					rfb.resizeSession = true;
+					setStatus("");
+				});
 				rfb.addEventListener("disconnect", () => {
-					if (!abort.signal.aborted) setStatus("Desktop disconnected. Close this view to try again.");
+					if (!abort.signal.aborted) setStatus("Desktop disconnected. Switch to Terminal and back to reconnect.");
 				});
 				void read();
 			} catch (e) {
@@ -94,7 +97,6 @@ export function Desktop({ onClose }: { onClose: () => void }) {
 		<section aria-label="Debian desktop" className="absolute inset-0 z-2 flex flex-col bg-bg">
 			<div className="flex items-center justify-between border-b border-line px-3 py-1">
 				<span className="text-sm text-muted">Xfce desktop</span>
-				<button type="button" className="btn btn-sm" onClick={onClose}>Back to terminal</button>
 			</div>
 			<div className="relative min-h-0 flex-1">
 				<div id="desktop-screen" ref={screen} className="absolute inset-0" />

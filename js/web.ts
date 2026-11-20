@@ -21,7 +21,7 @@ import { webPlatform } from "./web/platform.ts";
 
 export * from "./core/index.ts";
 export { DATA_DISK_NAME, DATA_DISK_VERSION, IdbStore, dataDiskStore, importDataDisk, openDataDisk, openDistroDisk, openHttpDisk, resetDataDisk, resetHttpDisk } from "./web/disk.ts";
-export { openFolderDisk } from "./web/folder-disk.ts";
+export { openFolderDisk, folderDiskSize, compactFolderDisk, DEFAULT_FOLDER_DISK_GIB, MAX_FOLDER_DISK_GIB } from "./web/folder-disk.ts";
 export type { DataDiskNameOptions, HttpDiskOptions, IdbStoreOptions, OpenDataDiskOptions } from "./web/disk.ts";
 export { DEFAULT_MEMORY_FALLBACK_MIB, autoMemoryMiB, isMobile } from "./web/memory.ts";
 export { webCpuBlocker } from "./web/cpu.ts";

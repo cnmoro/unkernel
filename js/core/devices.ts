@@ -78,6 +78,8 @@ export interface DataDiskSpec extends SpecCommon {
 	snapshotLimit?: number;
 	/** A user-selected directory for the persistent data disk (browser). */
 	folder?: FileSystemDirectoryHandle;
+	/** Requested capacity in bytes, applied before the folder disk is attached. */
+	folderSize?: number;
 }
 
 export type DiskSpec = FileDiskSpec | HttpDiskSpec | DataDiskSpec;

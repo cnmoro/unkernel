@@ -1,0 +1,15 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026 unkernel contributors
+
+set -eu
+export LC_ALL=C
+device=$(findmnt -nro SOURCE --mountpoint /data)
+disk_bytes=$(blockdev --getsize64 "$device")
+header=$(dumpe2fs -h "$device" 2>/dev/null)
+blocks=$(printf '%s\n' "$header" | awk '/^Block count:/ { print $3 }')
+block_size=$(printf '%s\n' "$header" | awk '/^Block size:/ { print $3 }')
+[ "$blocks" -gt 0 ] && [ "$block_size" -gt 0 ] || exit 1
+[ "$((blocks * block_size))" -lt "$disk_bytes" ] || exit 0
+resize2fs "$device"
+sync -f /data

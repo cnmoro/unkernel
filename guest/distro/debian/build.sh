@@ -193,7 +193,7 @@ install_common "$stage"
 # The packages the image comes with, on top of the tarball's (with their
 # dependencies, no recommends). Adding one is adding its name here.
 # libatomic1: the official Node.js build links it (the kw layer's node shim).
-DEBIAN_PACKAGES="curl ca-certificates unzip procps less vim-tiny xz-utils zstd iproute2 htop tmux sudo libatomic1"
+DEBIAN_PACKAGES="curl ca-certificates unzip procps less vim-tiny xz-utils zstd iproute2 htop tmux sudo libatomic1 e2fsprogs"
 DEBIAN_PACKAGES+=" systemd-sysv dbus dbus-x11 libpam-systemd"
 DEBIAN_PACKAGES+=" tigervnc-standalone-server xinit xauth x11-xserver-utils xfonts-base fonts-dejavu-core"
 DEBIAN_PACKAGES+=" xfce4-session xfwm4 xfdesktop4 xfce4-panel xfce4-settings thunar xfce4-terminal adwaita-icon-theme"

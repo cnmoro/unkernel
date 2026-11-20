@@ -31,7 +31,7 @@ export const webDevices: DeviceRegistry = extendDevices(coreDevices, {
 		async data(spec: DataDiskSpec, ctx: DeviceContext) {
 			const template = spec.template === "bundled" ? bundledBoot(ctx.module).datadisk : spec.template;
 			if (!template) throw new Error("no template (the kernel has no unkernel.datadisk section)");
-			if (spec.folder) return openFolderDisk(spec.folder, template, (e) => ctx.onDiskError(ctx.index, e));
+			if (spec.folder) return openFolderDisk(spec.folder, template, (e) => ctx.onDiskError(ctx.index, e), spec.folderSize);
 			const common = { template, name: spec.name, version: spec.version, log: ctx.log };
 			if (spec.mode === "snapshot") return openDataDisk({ ...common, mode: "snapshot", snapshotLimit: spec.snapshotLimit });
 			try {

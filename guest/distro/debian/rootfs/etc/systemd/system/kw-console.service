@@ -3,7 +3,8 @@
 
 [Unit]
 Description=Unkernel console
-After=kw-net.service
+After=kw-net.service kw-grow-data.service
+Wants=kw-grow-data.service
 
 [Service]
 ExecStartPre=/usr/lib/kw/welcome

@@ -206,7 +206,7 @@ const scenarios = {
 		const q = new URLSearchParams(opts.all);
 		// The test overrides worker, CPUs and the startup storage picker in lib.mjs.
 		const home = new URLSearchParams(opts.before);
-		if (JSON.stringify(opts.before) !== JSON.stringify(opts.reset) || [...home.keys()].some((k) => k !== "worker" && k !== "cpus" && k !== "storage") || !opts.wispShown || !opts.wispHidden || opts.label !== "Reboot to apply"
+		if (JSON.stringify(opts.before) !== JSON.stringify(opts.reset) || [...home.keys()].some((k) => k !== "worker" && k !== "cpus" && k !== "storage" && k !== "view") || !opts.wispShown || !opts.wispHidden || opts.label !== "Reboot to apply"
 			|| q.get("mem") !== "64" || q.get("wisp") !== "wss://a.example/,wss://b.example/" || q.get("jit") !== "0" || q.get("verbose") !== "1"
 			|| q.get("append") !== "console=hvc0 rdinit=/bin/sh" || q.get("data") !== "0" || q.get("root") !== "initramfs" || q.get("worker") !== (opts.workerDefault ? null : "1") || q.get("cpus") !== (opts.cpus && opts.cpuNext !== 2 ? "2" : null) || opts.distroDefault !== "opt-distro-debian" || q.get("distro") !== "none" || opts.off.wisp !== "0")
 			throw new Error(`options do not map to the settings: ${JSON.stringify(opts)}`);

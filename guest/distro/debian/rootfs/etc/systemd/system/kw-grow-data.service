@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026 unkernel contributors
+
+[Unit]
+Description=Grow the unkernel data filesystem to its disk size
+ConditionKernelCommandLine=kw.growdata=1
+ConditionPathIsMountPoint=/data
+After=kw-setup.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/kw-grow-data
+RemainAfterExit=yes
+StandardOutput=journal+console

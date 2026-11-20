@@ -122,12 +122,18 @@ function DataDisk() {
 	const safeNote = useStore((s) => s.safeNote);
 	const file = useRef<HTMLInputElement>(null);
 	const safe = KW.config.root === "initramfs";
+	const state = useStore((s) => s.state);
+	const report = (e: unknown) => ui.toast((e as Error).message);
 	return (
 		<>
 			<p id="data-status" className="text-muted">{status}</p>
 			<p id="data-safe-note" hidden={!safeNote} className="mt-2 border-l-2 border-warn pl-3 text-fg">{safeNote}</p>
 			<div className="mt-3 flex flex-wrap gap-2">
 				<button id="data-export" type="button" className="btn btn-sm" title="Download /data as a .kwsparse.gz file" onClick={() => ui.dataExport()}>Export</button>
+				{KW.dataFolder && state === "running" && <button type="button" className="btn btn-sm"
+					onClick={() => void KW.poweroff?.().catch(report)}>Power off</button>}
+				{KW.dataFolder && state === "halted" && <button type="button" className="btn btn-sm"
+					onClick={() => void KW.compactData?.().catch(report)}>Compact now</button>}
 				{!KW.dataFolder && <>
 					<button id="data-import" type="button" className="btn btn-sm" title="Replace /data with an exported file"
 						onClick={async () => { if (await ui.dataImport() && file.current) { file.current.value = ""; file.current.click(); } }}>Import…</button>

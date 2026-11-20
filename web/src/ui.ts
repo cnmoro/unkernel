@@ -492,11 +492,11 @@ export function createUi(cfg: Config) {
 			if (u.href === location.href) location.reload();
 			else location.assign(u);
 		};
-		// Let the guest write its file systems back to the saved disks first
-		// (boot.ts: KW.sync, at most 3 s).
-		if (KW.beforeReboot && $.get().state === "running") {
+		// Let the guest save its disks first. Folder disks power off and finish
+		// their checkpoint before the reload.
+		if (KW.beforeReboot && ($.get().state === "running" || (KW.dataFolder && $.get().state === "halted"))) {
 			ui.toast("Saving disks…");
-			KW.beforeReboot().then(go, go);
+			KW.beforeReboot().then(go, (e: unknown) => { rebooting = false; ui.toast((e as Error).message); });
 		} else go();
 	}
 

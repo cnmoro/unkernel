@@ -148,6 +148,7 @@ async function attachTarget(target, name, { shots } = {}) {
 			if (!u.searchParams.has("worker")) u.searchParams.set("worker", "0");
 			if (!u.searchParams.has("cpus")) u.searchParams.set("cpus", "1");
 			if (!u.searchParams.has("storage")) u.searchParams.set("storage", "browser");
+			if (!u.searchParams.has("view")) u.searchParams.set("view", "terminal");
 			return send("Page.navigate", { url: u.href });
 		},
 		async waitFor(expr, what, ms = 90000) {

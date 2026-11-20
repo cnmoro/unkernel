@@ -136,17 +136,31 @@ The page takes a few URL parameters:
 | `?jit=0` | Interpreter only |
 | `?data=0` | Temporary session, a fresh system every time |
 | `?storage=browser` | Skip the storage picker and use IndexedDB |
+| `?view=terminal` / `?view=desktop` | Skip the Debian startup view choice |
 | `?worker=0` | Run the kernel on the page's thread (default: in a Web Worker where the page is cross-origin isolated) |
 | `?cpus=2` | Boot on that many CPUs, each in a Web Worker (default: half the device's threads, up to 4 on desktops and 2 in Firefox, one on phones, in Safari and on iOS, where the page has the SMP kernel and is cross-origin isolated; `?cpus=1`: one CPU) |
 
 On browsers with a directory picker, choose **Choose folder** before boot
-to save the ext4 data disk in an `unkernel-data` subdirectory. To move the
-guest, shut it down with `poweroff`, then choose the same parent folder in
-the other browser. This restores installed packages, settings and files.
+to save the ext4 data disk in an `unkernel-data` subdirectory. Debian starts
+with 4 GiB of virtual disk capacity. Set a larger capacity when creating a
+disk or choose **Grow disk** when reopening an existing folder. Debian
+grows the mounted filesystem on boot and retries an interrupted resize on
+the next boot. The folder uses host capacity as the guest writes blocks.
+
+To move the guest, power it off and then choose the same parent folder in
+the other browser. This restores installed packages, settings, and files.
 Use the folder from one browser at a time. Browsers without a folder picker
-can use IndexedDB or `?data=0`. Open **Desktop** in the Debian status bar
-to start Xfce. Its connection stays on the guest's vsock bridge, so it also
-works with guest networking off.
+can use IndexedDB or `?data=0`. After a clean poweroff or reboot, unkernel
+compacts the folder when at least 256 batches have accumulated or a
+checkpoint would reclaim at least 64 MiB. **Compact now** is available
+after poweroff. Compaction temporarily needs room for the checkpoint.
+Older builds must be updated before opening a compacted or grown folder.
+
+Choose **Start in Desktop** at boot to start Xfce automatically. The
+**Terminal / Desktop** button switches between the shell and the same
+desktop session. The guest resolution follows the desktop view when
+TigerVNC accepts a resize. The connection stays on the guest's vsock
+bridge, so it also works with guest networking off.
 
 To build the fork locally, run `./setup.sh`, then `pnpm install` and
 `KW_LOCAL=1 pnpm dev`. For a web build using GitHub release assets, set

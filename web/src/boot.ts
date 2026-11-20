@@ -35,7 +35,7 @@ import { dropLegacyScope } from "./sw.ts";
 import { takeResumeRequest } from "./ui.ts";
 import { createWindows, pasteText, setTermFont, termText, TERM_OPTIONS } from "./windows.ts";
 import {
-	BootError, ConsoleRouter, KernelInstance, WorkerKernel, bundledBoot, createKernel, loadKernelModule, openDistroDisk, openFolderDisk, serveWasiPrograms, snapshotDiskMismatch,
+	BootError, ConsoleRouter, KernelInstance, WorkerKernel, bundledBoot, createKernel, loadKernelModule, openDistroDisk, openFolderDisk, compactFolderDisk, serveWasiPrograms, snapshotDiskMismatch,
 	type BlockDevice, type DistroDisk, type BootProgress, type DiskSpec, type DiskState, type DownloadProgress, type Kernel, type KernelHandle, type KernelSnapshot,
 } from "./sdk.ts";
 
@@ -140,6 +140,7 @@ export function start(): void {
 	// Shown in the panel's Environment list ("Data disk", "Storage") and its
 	// Data disk section; QuotaExceededError and other failed saves are errors.
 	let data: DataAttach | null = null;
+	let folderTemplate: Uint8Array | undefined;
 	let saveErrorShown = -Infinity, storageFailed = false;
 	function saveError(e: unknown) {
 		storageFailed = true;
@@ -163,6 +164,7 @@ export function start(): void {
 	/** Worker mode: the worker's latest snapshot of the data disk (spec 0), if it was built. */
 	const workerData = (): DiskState | undefined => (vm instanceof WorkerKernel ? vm.disks.find((d) => d.index === 0 && d.kind === "data") : undefined);
 	function dataStatus() {
+		if (folder && ended()) return;
 		const d = data?.disk;
 		const w = d ? undefined : workerData();
 		if (w) {
@@ -186,7 +188,7 @@ export function start(): void {
 		if (folder) {
 			const template = bundledBoot(module).datadisk;
 			if (!template) throw new Error("The kernel has no bundled data disk template");
-			const disk = await openFolderDisk(folder, template, saveError);
+			const disk = await openFolderDisk(folder, template, saveError, KW.folderSize);
 			data = { disk, lock: null, from: "bundled in the kernel" };
 			KW.dataDisk = disk;
 			showData({ size: disk.size, seeded: disk.seeded, storedBlocks: disk.stored.size }, performance.now() - t0);
@@ -239,7 +241,7 @@ export function start(): void {
 	async function dataSpec(): Promise<DiskSpec[]> {
 		if (folder) {
 			data = { disk: null, lock: null, from: "bundled in the kernel" };
-			return [{ kind: "data", template: "bundled", folder }];
+			return [{ kind: "data", template: "bundled", folder, folderSize: KW.folderSize }];
 		}
 		if (!cfg.data) data = { disk: null, lock: null, reason: "temporary session" };
 		else if (typeof indexedDB === "undefined") data = { disk: null, lock: null, reason: "no IndexedDB in this browser" };
@@ -269,13 +271,80 @@ export function start(): void {
 	}
 	/** Sync the guest's file systems to the persistent disks (the SDK's sync()). */
 	KW.sync = (opts) => (vm && !ended() ? vm.sync(opts) : Promise.resolve(true));
-	KW.beforeReboot = () => KW.sync!();
+	let folderStopped = false;
+	let maintenance: Promise<void> | undefined;
+	let shutdown: Promise<void> | undefined;
+	const folderClosed = Promise.withResolvers<void>();
+	function compact(force: boolean): Promise<void> {
+		if (!folder) return Promise.resolve();
+		return maintenance ??= (async () => {
+			try {
+				const result = await compactFolderDisk(folder, force, () => {
+					ui.dataStatus("Compacting the saved disk…");
+					ui.hostLog("[host] folder disk: writing a checkpoint");
+				});
+				if (result) {
+					const note = `Checkpoint saved in ${fmtS(result.elapsedMs)}. Replaced ${result.transactions} batches with ${result.checkpointFiles} files; ${fmtSize(result.reclaimedBytes)} reclaimable.`;
+					ui.dataStatus(note);
+					ui.hostLog(`[host] folder disk: ${note}`);
+				} else if (force) ui.toast("The folder disk is already compact");
+			} catch (e) {
+				const message = `Disk compaction could not finish: ${(e as Error).message}`;
+				ui.dataStatus(message);
+				ui.hostLog(`[host] folder disk: ${message}`);
+				ui.toast(message);
+			}
+		})().finally(() => { maintenance = undefined; });
+	}
+	if (folder) {
+		KW.poweroff = () => {
+			if (!vm) return Promise.reject(new Error("The system is still starting"));
+			if (shutdown) return shutdown;
+			const target = vm;
+			shutdown = (async () => {
+				let timer: ReturnType<typeof setTimeout> | undefined;
+				try {
+					if (!ended()) {
+						const cmd = cfg.guest === "debian"
+							? target.exec("systemctl", ["poweroff", "--no-block"], { user: "root", timeout: 15000 })
+							: target.exec("poweroff", [], { user: "root", timeout: 15000 });
+						await Promise.race([target.exited, cmd.then((r) => {
+							if (r.exitCode !== 0 && !ended()) throw new Error(r.stderr.trim() || "The guest could not power off");
+						}, (e: unknown) => {
+							// The exec connection can close as part of a successful shutdown.
+							if (!(e instanceof Error && "code" in e && e.code === "ECONNRESET") && !ended()) throw e;
+						})]);
+					}
+					await Promise.race([folderClosed.promise, new Promise<never>((_, reject) => {
+						timer = setTimeout(() => reject(new Error("The folder disk is still closing; try again when it is ready")), 120000);
+					})]);
+					await maintenance;
+				} finally {
+					clearTimeout(timer);
+				}
+			})().finally(() => { shutdown = undefined; });
+			return shutdown;
+		};
+		KW.compactData = async () => {
+			if (!folderStopped) throw new Error("Power off the system before compacting its disk");
+			await compact(true);
+		};
+	}
+	KW.beforeReboot = () => KW.poweroff ? KW.poweroff() : KW.sync!();
 	document.addEventListener("visibilitychange", () => {
 		if (document.visibilityState === "hidden") void KW.sync!().then(dataStatus);
 	});
 	addEventListener("pagehide", () => { void KW.sync!(); });
 	/** Download the data disk as a .kwsparse.gz file (synced first). */
 	KW.exportData = async () => {
+		if (folder && ended()) {
+			await folderClosed.promise;
+			await maintenance;
+			if (!folderTemplate) throw new Error("The data disk template is unavailable");
+			const saved = await openFolderDisk(folder, folderTemplate);
+			try { return await exportDataDisk(saved); }
+			finally { await detachDataDisk(saved); }
+		}
 		const d = data?.disk;
 		const w = d ? undefined : workerData();
 		if (w && vm instanceof WorkerKernel) {
@@ -379,6 +448,18 @@ export function start(): void {
 	// What the base booted (/run/kw-base: the image id, the upper layer), for the
 	// Environment rows, About and diagnostics.
 	void guestReady.then(showBase, () => {});
+	if (folder && cfg.guest === "debian") void guestReady.then(async (target) => {
+		try {
+			const result = await target.exec("systemctl", ["show", "kw-grow-data.service", "-p", "LoadState", "-p", "ActiveState"], { user: "root", timeout: 60000 });
+			if (result.stdout.includes("ActiveState=failed") || (KW.folderSize && !result.stdout.includes("ActiveState=active"))) {
+				const message = "Debian could not grow the filesystem. Check systemctl status kw-grow-data.service in the guest.";
+				ui.toast(message);
+				ui.hostLog(`[host] folder disk: ${message}`);
+			}
+		} catch (e) {
+			if (!ended()) ui.hostLog(`[host] folder disk: could not check resize status: ${(e as Error).message}`);
+		}
+	}, () => {});
 	KW.preview = { open: openPreview, close: closePreview, url: previewUrl };
 	// Paste, the key bar, the touch controls and the shortcuts act on the current window.
 	KW.term = {
@@ -826,12 +907,14 @@ export function start(): void {
 		ok("Compiled the kernel", ui.stageTime("compile"));
 		ui.hostLog(`[host] kernel downloaded and compiled in ${fmtS(performance.now() - t0)}`);
 		const bundle = bundledBoot(module);
+		if (folder) folderTemplate = bundle.datadisk;
 		const b = bundle.initrd;
 		if (!b) throw tag(new Error(`${kernelUrl} has no bundled base initramfs`), "compile", "kernel");
 		ui.hostLog(`[host] base initramfs: bundled in ${kernelUrl} (${fmtMiB(b.length)} gzipped)`);
 		ok(`Found the base initramfs (${fmtMiB(b.length)})`);
 		// The bundle's own command line unless ?append= gives one, with ?root= (kw.root=) after it.
 		if (!cfg.append && bundle.cmdline) cfg.cmdline = cfg.root ? `${bundle.cmdline} kw.root=${cfg.root}` : bundle.cmdline;
+		if (folder && cfg.guest === "debian") cfg.cmdline += " kw.growdata=1";
 		if (distroOpening) {
 			try {
 				const { d, ms } = await distroOpening;
@@ -1048,7 +1131,13 @@ export function start(): void {
 
 		if (resumed) markRunning("resumed"); // the guest prints nothing by itself
 		const res = await vm.exited;
-		if (folder && data?.disk) await detachDataDisk(data.disk).catch(saveError);
+		if (folder) {
+			if (data?.disk) await detachDataDisk(data.disk).catch(saveError);
+			const clean = res.kind === "halt" && res.code >= 0 && res.code <= 2;
+			if (clean && !storageFailed) await compact(false);
+			folderStopped = clean;
+			folderClosed.resolve();
+		}
 		clearInterval(quiet);
 		attachPreview(null); // previews now get 503
 		stopWindows(`the kernel stopped (${res.kind})`);
@@ -1065,7 +1154,7 @@ export function start(): void {
 			ui.hostLog(`[host] kernel halted (code ${res.code})`);
 			if (!running) { ui.stage("boot", "done"); ui.stage("userspace", "skip"); }
 			// `reboot` in the guest (code 2): start again, unless it keeps doing that.
-			if (res.code === 2 && autoRebootAllowed()) {
+			if (res.code === 2 && !shutdown && autoRebootAllowed()) {
 				ui.setState("halted", "Restarting");
 				KW.term!.notice("[host] restart requested — rebooting");
 				await data?.disk?.saving?.catch(() => {}); // the last flush's transaction
@@ -1084,6 +1173,7 @@ export function start(): void {
 	boot().catch(async (e: StageError) => {
 		if (folder && data?.disk) await detachDataDisk(data.disk).catch(saveError);
 		console.error(e);
+		folderClosed.resolve();
 		stopWindows("the boot failed");
 		failed(e.kind === "distro" ? `Open the ${cfg.guest} image` : STEP[e.stageId ?? ""] ?? "Boot");
 		if (e.stageId) ui.stage(e.stageId, "fail", e.message);

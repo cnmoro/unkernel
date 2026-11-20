@@ -162,7 +162,7 @@ function More() {
 	);
 }
 
-export function Bar({ onDesktop }: { onDesktop?: () => void }) {
+export function Bar({ desktop, onDesktop }: { desktop: boolean; onDesktop?: () => void }) {
 	const ui = KW.ui!;
 	const label = useStore((s) => s.label);
 	const state = useStore((s) => s.state);
@@ -179,7 +179,7 @@ export function Bar({ onDesktop }: { onDesktop?: () => void }) {
 	// A preview that covers the stage (narrow, or [□]) is the view shown, over a terminal or the display.
 	const covers = previewCovers(preview, useNarrow());
 	const picture = display.attached && display.shown && !covers;
-	const term = !panel && !picture && !covers;
+	const term = !desktop && !panel && !picture && !covers;
 	const tab = (t: Tab) => () => ui.togglePanel(t);
 	const canOpen = wins.length < MAX_WINDOWS && state !== "halted" && state !== "error";
 
@@ -205,7 +205,9 @@ export function Bar({ onDesktop }: { onDesktop?: () => void }) {
 				) : <Seg on={panel === "keys"} title={`Keyboard shortcuts: ${PREFIX}, then a key (${PREFIX} ?)`} label="Keyboard shortcuts" onClick={() => ui.togglePanel("keys")} className="text-[11px] opacity-50 hover:opacity-100 max-sm:hidden">{PREFIX_SHORT}</Seg>}
 			</div>
 			<div className="flex flex-none items-stretch gap-px">
-				{onDesktop && <Seg id="bar-desktop" title="Open Xfce desktop" label="Desktop" onClick={onDesktop}><DisplayIcon /></Seg>}
+				{onDesktop && <Seg id="bar-desktop" on={desktop} title={desktop ? "Return to the terminal" : "Open Xfce desktop"} label={desktop ? "Terminal" : "Desktop"} onClick={onDesktop}>{desktop ? <TermIcon /> : <DisplayIcon />}
+					<span className="ml-1 hidden sm:inline">{desktop ? "Terminal" : "Desktop"}</span>
+				</Seg>}
 				{display.attached && (
 					<Seg id="bar-display" on={!panel && picture} title={picture ? "Show the terminal" : "Show the display"} hint="d" onClick={toggleDisplay}>
 						<DisplayIcon />

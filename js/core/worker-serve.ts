@@ -289,7 +289,7 @@ export function serveKernel(port: WorkerPort, options: ServeKernelOptions = {}):
 			flushVsock();
 			// The owner ends the worker when it gets "exit": let saves in flight commit
 			// first, and a snapshot's result (one with stop ends the kernel) go out.
-			await Promise.race([Promise.all([vm.settled(), ...snapshots]), new Promise((r) => setTimeout(r, EXIT_SAVE_WAIT_MS))]);
+			await Promise.race([Promise.all([vm.settled(), vm.disksClosed(), ...snapshots]), new Promise((r) => setTimeout(r, EXIT_SAVE_WAIT_MS))]);
 			for (const id of pendingSyncs) post({ t: "synced", id, ok: false });
 			pendingSyncs.clear();
 			const result = cloneableExit(res);

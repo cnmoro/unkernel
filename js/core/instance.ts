@@ -458,6 +458,7 @@ export class KernelInstance implements KernelHandle {
 	skippedDisks: SkippedDisk[] = [];
 	/** Disks built from specs: the instance closes them at exit. */
 	#owned: BlockDevice[] = [];
+	#diskClose = Promise.resolve();
 	/** Settles when the kernel exits: halt (power off 0, halt 1, restart 2), panic 253, trap 254, fatal 255, or stop(). */
 	readonly exited: Promise<ExitResult>;
 	#out: ConsoleOutput;
@@ -484,7 +485,7 @@ export class KernelInstance implements KernelHandle {
 			this.#shm?.shutdown();
 			this.#closeNet();
 			this.#out.close();
-			void this.#closeDisks();
+			this.#diskClose = this.#closeDisks();
 			return res;
 		});
 	}
@@ -602,6 +603,9 @@ export class KernelInstance implements KernelHandle {
 	async settled(): Promise<void> {
 		await Promise.all(this.kernel.block.disks.map((d) => d.saving?.catch(() => {})));
 	}
+
+	/** @internal The worker releases its persistent store locks before reporting exit. */
+	disksClosed(): Promise<void> { return this.#diskClose; }
 
 	async #closeDisks(): Promise<void> {
 		await this.settled();

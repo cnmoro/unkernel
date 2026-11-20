@@ -187,3 +187,21 @@ kernel/guest.md (Distro images).
 - An export or import of the data disk is held in memory as a whole.
 - Without a data disk the changes are in RAM (a tmpfs upper), so `apk
   add` must fit in it.
+
+## Folder-backed disks
+
+The browser can open a separate folder store under `unkernel-data/`. Its
+`disk.json` supplies a persistent capacity and ID. A flush atomically
+writes one numbered `.kwd` transaction. Folder v2 can reference a set of
+checkpoint shards containing the latest blocks as of a transaction.
+Always write and verify every shard before replacing the manifest. The
+manifest is the commit point, and covered transactions can be removed
+afterward. On open, validate the current checkpoint and all subsequent
+transactions before pruning retired files. Never publish a v1 identity
+for a compacted or grown store.
+
+The page waits for saves and the writer lock to close before compacting a
+powered-off guest. Disk geometry can grow before attaching the block
+device. In Debian, `kw.growdata=1` grows ext4 online if it is smaller than
+the device. A retry compares the actual filesystem size. Use separate
+disposable folders to test migration, interrupted commits, and shutdown.

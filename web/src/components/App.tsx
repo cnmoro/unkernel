@@ -34,7 +34,12 @@ export function App() {
 	const cfg = KW.config;
 	const state = useStore((s) => s.state);
 	const app = useRef<HTMLDivElement>(null);
-	const [desktop, setDesktop] = useState(false);
+	const [view, setView] = useState<boolean>();
+	const desktop = view ?? !!KW.startDesktop;
+	const toggleDesktop = () => {
+		setView(!desktop);
+		if (desktop) KW.term?.focus();
+	};
 	const [stage, setStageEl] = useState<HTMLElement | null>(null);
 
 	useEffect(() => setStage(stage), [stage]);
@@ -53,12 +58,12 @@ export function App() {
 						<TermHost />
 						<Splash />
 						<ResumeCard />
-						{desktop && state === "running" && <Desktop onClose={() => { setDesktop(false); KW.term?.focus(); }} />}
+						{desktop && state === "running" && <Desktop />}
 					</main>
 					<Preview />
 				</div>
 				<Keys />
-				<Bar onDesktop={cfg.guest === "debian" && !desktop && state === "running" ? () => setDesktop(true) : undefined} />
+				<Bar desktop={desktop} onDesktop={cfg.guest === "debian" && state === "running" ? toggleDesktop : undefined} />
 				{/* Over the stage, or rotated over the whole page (status line included). */}
 				<Display stage={stage} />
 			</div>
