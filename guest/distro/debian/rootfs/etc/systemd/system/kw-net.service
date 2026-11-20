@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026 unkernel contributors
+
+[Unit]
+Description=Configure the unkernel network
+Before=network.target network-online.target
+Wants=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/kw/net
+RemainAfterExit=yes

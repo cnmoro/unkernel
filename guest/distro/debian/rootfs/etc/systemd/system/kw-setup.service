@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026 unkernel contributors
+
+[Unit]
+Description=Set up unkernel guest devices
+DefaultDependencies=no
+After=systemd-tmpfiles-setup.service data.mount
+Before=sysinit.target shutdown.target
+Conflicts=shutdown.target
+RefuseManualStop=yes
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/kw/rc
+ExecStop=-/usr/bin/journalctl --relinquish-var
+ExecStop=/usr/lib/kw/data-stop
+RemainAfterExit=yes
+StandardOutput=journal+console

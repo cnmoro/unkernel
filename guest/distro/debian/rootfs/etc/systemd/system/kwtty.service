@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026 unkernel contributors
+
+[Unit]
+Description=Unkernel terminal and socket bridge
+After=kw-net.service
+
+[Service]
+ExecStart=/usr/bin/kwtty serve
+Restart=always
+RestartSec=1
+TimeoutStopSec=3

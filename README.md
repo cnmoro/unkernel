@@ -96,8 +96,8 @@ overlayfs, behaves as it does on a server, because it runs the same code.
   starts with only the `main` repository, because it is about 4x faster that
   way; `community` is added the first time a command needs it.
 - **Run real runtimes and tools**: Node and npm, Python, OpenSSL, curl and
-  `wget`, straight from the distribution. Debian 13 boots the same way as
-  Alpine (`--distro debian`), with apt.
+  `wget`, straight from the distribution. Debian 13 is the default, with
+  systemd, APT, Xfce, Git, GCC, Make and Python.
 - **[Write graphics and sound programs](#display-input-and-sound)** against
   `/dev/fb0`, evdev and ALSA. Try `glimmer`, a tiny game with sound.
 - **[Embed Linux in your app](#-use-it-from-javascript)** with a
@@ -134,9 +134,23 @@ The page takes a few URL parameters:
 | `?net=0` | Boot without a network |
 | `?wisp=wss://...` | Use your own [Wisp](https://github.com/MercuryWorkshop/wisp-protocol) proxy |
 | `?jit=0` | Interpreter only |
-| `?data=0` | No persistent disk, a fresh system every time |
+| `?data=0` | Temporary session, a fresh system every time |
+| `?storage=browser` | Skip the storage picker and use IndexedDB |
 | `?worker=0` | Run the kernel on the page's thread (default: in a Web Worker where the page is cross-origin isolated) |
 | `?cpus=2` | Boot on that many CPUs, each in a Web Worker (default: half the device's threads, up to 4 on desktops and 2 in Firefox, one on phones, in Safari and on iOS, where the page has the SMP kernel and is cross-origin isolated; `?cpus=1`: one CPU) |
+
+On browsers with a directory picker, choose **Choose folder** before boot
+to save the ext4 data disk in an `unkernel-data` subdirectory. To move the
+guest, shut it down with `poweroff`, then choose the same parent folder in
+the other browser. This restores installed packages, settings and files.
+Use the folder from one browser at a time. Browsers without a folder picker
+can use IndexedDB or `?data=0`. Open **Desktop** in the Debian status bar
+to start Xfce. Its connection stays on the guest's vsock bridge, so it also
+works with guest networking off.
+
+To build the fork locally, run `./setup.sh`, then `pnpm install` and
+`KW_LOCAL=1 pnpm dev`. For a web build using GitHub release assets, set
+`KW_KERNEL_REPO=cnmoro/unkernel`.
 
 Browsers can't open raw TCP sockets, so the page reaches the internet
 through a Wisp proxy. The default one accepts only known origins, so if you
@@ -152,30 +166,46 @@ host the page somewhere else, point `?wisp=` at your own proxy.
 ## 💻 Run it from the terminal
 
 ```sh
-npx unkernel
+node js/cli.ts
 ```
 
-This boots Alpine, with networking over your host's sockets. Press
-**Ctrl-]** to quit. The package holds the kernel and a small base system;
-the first run downloads the Alpine image (about 4 MB) from the GitHub
-release of your version and keeps it in `~/.cache/unkernel`.
+After building the fork, this boots Debian through your host's network
+sockets. Press **Ctrl-]** to quit. To use a fork release, install its
+`unkernel.tgz` with npm and run `unkernel`.
 
 ```sh
-npx unkernel --distro debian                 # Debian 13 instead (about 57 MB, downloaded once)
-npx unkernel --distro none                   # no distro: the base shell (busybox)
-npx unkernel --data my-data.img              # changes persist on a /data disk, created on first use
-npx unkernel --display --sound               # a framebuffer and a sound card
-npx unkernel --mem 1024 --no-net             # more memory, no network
-npx unkernel --mount .:/work                 # this directory at /work in the guest (:ro for read-only)
-npx unkernel --forward 8000:80               # host 127.0.0.1:8000 to port 80 in the guest
-npx unkernel --timeout 60 --input '{8}uname -a\n{2}poweroff\n'   # scripted: wait, type, wait, type
-npx unkernel --help                          # everything else
+node js/cli.ts --distro alpine                 # Use Alpine explicitly
+node js/cli.ts --distro none                   # no distro: the base shell (busybox)
+node js/cli.ts --data my-data.img              # changes persist on a /data disk, created on first use
+node js/cli.ts --display --sound               # a framebuffer and a sound card
+node js/cli.ts --mem 1024 --no-net             # more memory, no network
+node js/cli.ts --mount .:/work                 # this directory at /work in the guest (:ro for read-only)
+node js/cli.ts --forward 8000:80               # host 127.0.0.1:8000 to port 80 in the guest
+node js/cli.ts --timeout 60 --input '{8}uname -a\n{2}poweroff\n'   # scripted: wait, type, wait, type
+node js/cli.ts --help                          # everything else
 ```
 
 Without `--data`, changes to the root file system are kept in memory and
 gone at exit; with it, each distro keeps its own in `/data/distros/<name>/`.
 `--distro` also takes an image file or an http(s) URL, and
 `UNKERNEL_CACHE_DIR` moves the download cache.
+
+### Tailscale in Debian
+
+Inside the guest:
+
+```sh
+curl -fsSL https://tailscale.com/install.sh | sh
+systemctl is-active tailscaled
+sudo tailscale up
+```
+
+Open the sign-in URL printed by Tailscale. Its systemd service uses
+userspace networking because the guest kernel lacks netfilter. For guest
+apps that need to reach tailnet peers, use the SOCKS5 proxy, for example
+`curl --proxy socks5h://127.0.0.1:1055 http://peer-name`. Peer traffic
+crosses Tailscale's DERP relays on the TCP-only host network. Persistent
+guest storage also saves the node identity under `/var/lib/tailscale`.
 
 Exit codes: 0 power off, 1 halt or boot failure, 2 restart, 124 timeout, 253
 kernel panic, 254 wasm trap, 255 fatal error. The CLI is built on the

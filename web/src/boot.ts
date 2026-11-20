@@ -35,7 +35,7 @@ import { dropLegacyScope } from "./sw.ts";
 import { takeResumeRequest } from "./ui.ts";
 import { createWindows, pasteText, setTermFont, termText, TERM_OPTIONS } from "./windows.ts";
 import {
-	BootError, ConsoleRouter, KernelInstance, WorkerKernel, bundledBoot, createKernel, loadKernelModule, openDistroDisk, serveWasiPrograms, snapshotDiskMismatch,
+	BootError, ConsoleRouter, KernelInstance, WorkerKernel, bundledBoot, createKernel, loadKernelModule, openDistroDisk, openFolderDisk, serveWasiPrograms, snapshotDiskMismatch,
 	type BlockDevice, type DistroDisk, type BootProgress, type DiskSpec, type DiskState, type DownloadProgress, type Kernel, type KernelHandle, type KernelSnapshot,
 } from "./sdk.ts";
 
@@ -104,6 +104,7 @@ function autoRebootAllowed(): boolean {
 export function start(): void {
 	const ui = KW.ui!;
 	const cfg = KW.config;
+	const folder = KW.dataFolder;
 	KW.started = true;
 	const g = globalThis as unknown as { term?: WTerm; kernel?: Kernel; vm?: KernelHandle };
 	// A KernelInstance, or with ?worker=1 a WorkerKernel (no low-level kernel; the display, evdev and sound through messages).
@@ -148,8 +149,8 @@ export function start(): void {
 		if (performance.now() - saveErrorShown < 30000) return; // once per burst of failed flushes
 		saveErrorShown = performance.now();
 		KW.report("storage", quota
-			? "The browser's storage quota is full: disk changes are NOT being saved (the guest sees I/O errors). Free space, or export the data disk and reset it."
-			: `Saving disk changes to IndexedDB failed: ${err?.message ?? e}`, err?.stack ?? "", false);
+			? "Disk storage is full: disk changes are NOT being saved (the guest sees I/O errors). Free space, or export the data disk and reset it."
+			: `Saving disk changes failed: ${err?.message ?? e}`, err?.stack ?? "", false);
 	}
 	const dataLog = (m: string) => { console.log(m); ui.hostLog(m); };
 	async function showStorage({ ask = false } = {}) {
@@ -167,7 +168,7 @@ export function start(): void {
 		if (w) {
 			const blocks = w.overlayBlocks ?? 0;
 			ui.diskUsage(blocks * 4096, w.size, w.persistent);
-			ui.dataStatus(w.persistent
+			ui.dataStatus(folder ? `Saved in ${folder.name}/unkernel-data.` : w.persistent
 				? `Saved in this browser (IndexedDB ${w.store}, written by the kernel worker): ${fmtSize(w.size)} disk, ${blocks} blocks (${fmtSize(blocks * 4096)}) stored.`
 				: `In memory only: ${data?.notice ?? w.notice ?? "not saved"}.`);
 			return;
@@ -175,13 +176,22 @@ export function start(): void {
 		if (!d) return;
 		const blocks = d.overlayBlocks;
 		ui.diskUsage(blocks * 4096, d.size, d.persistent);
-		ui.dataStatus(d.persistent
+		ui.dataStatus(folder ? `Saved in ${folder.name}/unkernel-data.` : d.persistent
 			? `Saved in this browser (IndexedDB ${d.store?.name}): ${fmtSize(d.size)} disk, ${blocks} blocks (${fmtSize(blocks * 4096)}) stored.`
 			: `In memory only: ${data?.notice ?? d.notice ?? "not saved"}.`);
 	}
 	async function openData(module: WebAssembly.Module): Promise<BlockDevice[]> {
 		// Opening IndexedDB, the tab lock, and loading the stored blocks (or seeding from the template).
 		const t0 = performance.now();
+		if (folder) {
+			const template = bundledBoot(module).datadisk;
+			if (!template) throw new Error("The kernel has no bundled data disk template");
+			const disk = await openFolderDisk(folder, template, saveError);
+			data = { disk, lock: null, from: "bundled in the kernel" };
+			KW.dataDisk = disk;
+			showData({ size: disk.size, seeded: disk.seeded, storedBlocks: disk.stored.size }, performance.now() - t0);
+			return [disk];
+		}
 		try {
 			data = await attachDataDisk({ enabled: cfg.data, bundled: bundledBoot(module).datadisk, log: dataLog, onError: saveError });
 		} catch (e) {
@@ -212,11 +222,11 @@ export function start(): void {
 			ui.hostLog(`[host] data disk: ${data.notice}`);
 		} else {
 			const stored = d.storedBlocks ?? 0;
-			ui.check("data", "Data disk", "pass", `${dev} (${fmtSize(d.size)}), saved in this browser`,
-				`${d.seeded ? `created from the template (${data.from})` : `${stored} blocks stored`}; lock: ${data.lock?.how}; opened in ${fmtS(ms)}` +
+			ui.check("data", "Data disk", "pass", `${dev} (${fmtSize(d.size)}), ${folder ? "saved in local folder" : "saved in this browser"}`,
+				`${d.seeded ? `created from the template (${data.from})` : `${stored} blocks stored`}; lock: ${data.lock?.how ?? "folder writer"}; opened in ${fmtS(ms)}` +
 				(cfg.worker ? "; the kernel worker writes it" : ""));
 			ok(`Attached the data disk ${dev} (${d.seeded ? "new" : `${fmtSize(stored * 4096)} stored`})`, ms);
-			void showStorage({ ask: true });
+			if (!folder) void showStorage({ ask: true });
 		}
 		dataStatus();
 		setInterval(dataStatus, 5000); // the stored block count grows as the guest writes
@@ -227,7 +237,11 @@ export function start(): void {
 	 * the lock gets a snapshot); the worker opens IndexedDB and builds it.
 	 */
 	async function dataSpec(): Promise<DiskSpec[]> {
-		if (!cfg.data) data = { disk: null, lock: null, reason: "off (?data=0)" };
+		if (folder) {
+			data = { disk: null, lock: null, from: "bundled in the kernel" };
+			return [{ kind: "data", template: "bundled", folder }];
+		}
+		if (!cfg.data) data = { disk: null, lock: null, reason: "temporary session" };
 		else if (typeof indexedDB === "undefined") data = { disk: null, lock: null, reason: "no IndexedDB in this browser" };
 		else {
 			const lock = await acquireDiskLock();
@@ -240,7 +254,7 @@ export function start(): void {
 	}
 	/** Worker mode, once booted: what the worker built (or why not), shown like an inline attach. */
 	function workerDataAttached(w: WorkerKernel, ms: number) {
-		if (!data?.lock) return; // no spec was sent
+		if (!data || (!folder && !data.lock)) return; // no spec was sent
 		KW.dataDisk = null; // the CowDisk is in the worker: KW.vm.disks has its state
 		const st = workerData();
 		const skipped = w.skippedDisks.find((d) => d.index === 0);
@@ -249,7 +263,7 @@ export function start(): void {
 			showData(null, ms);
 			return;
 		}
-		if (!data.lock.held) data.notice = `open in another tab: this tab's /data is ${st.notice ?? "in memory"} (changes are not saved)`;
+		if (data.lock && !data.lock.held) data.notice = `open in another tab: this tab's /data is ${st.notice ?? "in memory"} (changes are not saved)`;
 		else if (!st.persistent) data.notice = st.notice ?? "not saved";
 		showData({ size: st.size, seeded: st.seeded, storedBlocks: st.storedBlocks }, ms);
 	}
@@ -295,7 +309,7 @@ export function start(): void {
 		location.replace(u);
 	}
 	/** Replace the saved data disk with a .kwsparse[.gz] file (File, Blob or bytes), then reload. */
-	KW.importData = async (file) => {
+	if (!folder) KW.importData = async (file) => {
 		const bytes = file instanceof Uint8Array ? file : new Uint8Array(await file.arrayBuffer());
 		await takeOverData();
 		const r = await importDataDisk(bytes, { size: data?.disk?.size ?? workerData()?.size, log: dataLog });
@@ -304,7 +318,7 @@ export function start(): void {
 		return r;
 	};
 	/** Forget the saved data disk (the next boot starts from the template), then reload. */
-	KW.resetData = async () => {
+	if (!folder) KW.resetData = async () => {
 		await takeOverData();
 		await resetDataDisk();
 		ui.hostLog("[host] data disk: reset; reloading");
@@ -637,7 +651,7 @@ export function start(): void {
 	 * the SMP kernel cannot park, so it has no snapshots (ui.confirmSuspend()
 	 * says so, and KW.suspend stays unset).
 	 */
-	if (!smp) KW.suspend = async () => {
+	if (!smp && !folder) KW.suspend = async () => {
 		if (!vm || ended() || !running) throw new Error("the system is not running");
 		if (suspending) throw new Error("a suspend is in progress");
 		if (typeof indexedDB === "undefined") throw new Error("this browser has no IndexedDB to keep the session in");
@@ -784,7 +798,7 @@ export function start(): void {
 			? openDistroDisk(distro.url, { log: (m) => { console.log(m); ui.hostLog(m); } }).then((d) => ({ d, ms: performance.now() - tDistro }))
 			: null;
 		distroOpening?.catch(() => {}); // awaited below
-		const session = sessionInfo();
+		const session = folder ? Promise.resolve(null) : sessionInfo();
 		session.catch(() => {});
 		let dataDisks: BlockDevice[] | DiskSpec[] = [];
 		if (cfg.worker) {
@@ -1034,6 +1048,7 @@ export function start(): void {
 
 		if (resumed) markRunning("resumed"); // the guest prints nothing by itself
 		const res = await vm.exited;
+		if (folder && data?.disk) await detachDataDisk(data.disk).catch(saveError);
 		clearInterval(quiet);
 		attachPreview(null); // previews now get 503
 		stopWindows(`the kernel stopped (${res.kind})`);
@@ -1066,7 +1081,8 @@ export function start(): void {
 		ui.fail(res.kind, res.reason, (res.error as Error | undefined)?.stack ?? "", { title: titles[res.kind] ?? "Kernel stopped" });
 	}
 
-	boot().catch((e: StageError) => {
+	boot().catch(async (e: StageError) => {
+		if (folder && data?.disk) await detachDataDisk(data.disk).catch(saveError);
 		console.error(e);
 		stopWindows("the boot failed");
 		failed(e.kind === "distro" ? `Open the ${cfg.guest} image` : STEP[e.stageId ?? ""] ?? "Boot");

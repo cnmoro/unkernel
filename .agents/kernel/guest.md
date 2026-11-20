@@ -243,21 +243,15 @@ layer: boot to a prompt 0.25 s (Alpine) and 0.32 s (Debian) from
   without the bundle or node the image has no doas and no user. What else
   a program needs comes from apk on first use (the shim's libgcc, above).
 - **Debian** (`distro/debian/`): debian:trixie-slim (pinned in
-  `pins.sh`), Debian's own builds in full. `/sbin/init` ->
-  `/usr/local/sbin/kw-init`, a bash PID 1: the layer's rc, welcome and
-  net, the console's login shell on hvc0 (`kwtty login`) and `kwtty
-  serve` (respawned); `poweroff`/`halt`/`reboot` in `/usr/local/sbin`
-  signal it (through `sudo -n` for the user), and it stops
-  everything, runs the layer's shutdown and calls reboot(2) through the
-  base's busybox. Services are Debian's init scripts under sysv-rc (with
-  insserv and startpar, in `DEBIAN_PACKAGES`): kw-init runs runlevel 2
-  after net and 0 or 6 before it stops everything, only when that rc
-  directory has links to run; runlevel S (rcS.d) never runs, the layer's
-  rc does early boot. `/usr/sbin/runlevel` prints what kw-init writes to
-  `/run/kw-runlevel` (`N 2`), so that a package's invoke-rc.d starts its
-  service on install (`apt-get install cron`: running, and started at
-  every boot with a data disk). sudo's script is disabled (it only resets
-  `/run/sudo`). apt: `90kw` (no recommends, pdiffs or pty), debconf
+  `pins.sh`), Debian's own builds in full. The bootable image uses
+  systemd-sysv's `/sbin/init`. The kw units set up devices and DHCP, host
+  the login shell on hvc0 and the kwtty vsock server, and leave the data
+  filesystem clean at shutdown. Local power commands invoke systemctl
+  through sudo. The temporary package build still boots kw-init.
+  `kw-desktop.service` runs Xfce and TigerVNC as the guest user, with RFB
+  on the guest's loopback. Tailscale starts through its packaged unit
+  with a userspace-networking drop-in. apt: `90kw` (no recommends,
+  pdiffs or pty), debconf
   Noninteractive, the package lists of the image's date baked in
   (`DEBIAN_LISTS`, compressed by `tools/apt-lz4` as apt does) and apt's
   source cache made by the image's own apt at build time

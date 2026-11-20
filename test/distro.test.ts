@@ -95,6 +95,16 @@ for (const name of ["alpine", "debian"]) {
 			await poweroff(vm);
 		});
 
+		if (name === "debian") test("systemd boots and manages a guest service", async (t) => {
+			const vm = await boot(t, { distro: img!.file });
+			assert.equal(await asRoot(vm, "cat /proc/1/comm"), "systemd");
+			await asRoot(vm, "systemctl start multi-user.target");
+			assert.equal(await asRoot(vm, "systemctl is-active kw-setup kw-console kwtty kw-net"), "active\nactive\nactive\nactive");
+			await asRoot(vm, "systemd-run --quiet --wait /usr/bin/touch /run/kw-service-test && test -f /run/kw-service-test");
+			await asRoot(vm, "test -x /usr/bin/xfce4-session && test -x /usr/bin/Xtigervnc && test -x /usr/bin/git");
+			await poweroff(vm);
+		});
+
 		test("the kw layer's shims: fx, claude, opencode, node, npm, npx, bun, bunx, uv and uvx last on PATH; without a network the first call exits 127 and installs nothing (Debian's docker shim too)", async (t) => {
 			const vm = await boot(t, { distro: img!.file });
 			const tools = ["fx", "claude", "opencode", "node", "npm", "npx", "bun", "bunx", "uv", "uvx"];

@@ -9,5 +9,8 @@ if [ "$(id -u)" != 0 ]; then
 	sudo -n /usr/local/sbin/halt "$@"
 	exit
 fi
+if [ -d /run/systemd/system ]; then
+	exec /usr/bin/systemctl halt "$@"
+fi
 kill -USR1 1
 sleep 10

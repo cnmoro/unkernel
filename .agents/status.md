@@ -168,14 +168,10 @@ Open:
    show its own terminal windows, web.md). Check first: SharedWorker on Chrome for
    Android, and JSPI inside one. A service worker is unsuitable, since
    browsers stop idle ones.
-6. **glibc distros and systemd**: Debian 13 is a distro image
-   (`--distro debian`, kernel/guest.md) with apt; the page's Ubuntu demo
-   runs Ubuntu Base in a chroot on Alpine. systemd (once installed from
-   apt) booted Ubuntu Base 26.10 to multi-user.target on 2026-11-18; no
-   image ships it. Next: systemd as a distro's init with the kw layer's
-   network, BPF, keys, IPv6 and cgroup controllers if a service needs them
-   (costs in kernel/config.md), the ENOSYS and illegal-instruction logging
-   run on Debian.
+6. **systemd service compatibility**: Debian ships systemd and the kw units.
+   BPF, keys, IPv6 and cgroup controllers remain kernel work if a service
+   needs them (kernel/config.md). Tailscale's systemd drop-in uses userspace
+   networking while the kernel lacks netfilter.
 7. **Stack switching.** The wasm stack-switching proposal is at Phase 3,
    behind a flag in V8 and missing from WebKit (Node 26:
    `--experimental-wasm-wasmfx`). With a module-defined memory and stub

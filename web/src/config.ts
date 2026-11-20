@@ -100,7 +100,7 @@ export const DISTROS_OFFERED: readonly DistroEntry[] = DISTROS;
 export const DEFAULT_DISTRO = DISTROS_OFFERED.find((d) => d.name === "debian")?.name ?? DISTROS_OFFERED[0]?.name ?? "none";
 
 /** The project's source, linked from About and the boot notes. */
-export const REPO = "https://github.com/pithings/unkernel";
+export const REPO = "https://github.com/cnmoro/unkernel";
 
 /** The command line without ?append=. */
 export const DEFAULT_CMDLINE = "console=hvc0 rdinit=/init";

@@ -139,8 +139,8 @@ echo "== kernel/build.sh all"
 
 echo
 echo "Done in $(( (SECONDS - start) / 60 )) min $(( (SECONDS - start) % 60 )) s. Try:"
-echo "  node js/cli.ts                                                       # Alpine shell, Ctrl-] quits"
-echo "  node js/cli.ts --distro debian                                       # Debian (--distro none: the base shell)"
+echo "  node js/cli.ts                                                       # Debian shell, Ctrl-] quits"
+echo "  node js/cli.ts --distro alpine                                       # Alpine (--distro none: the base shell)"
 echo '  node js/cli.ts --append "console=hvc0 rdinit=/usr/bin/kwtest"         # smoke test (kwtest as /init)'
 echo "  node js/cli.ts --data /tmp/kwdata.img                                # changes persist on a data disk"
 echo "  pnpm install && pnpm dev                                             # browser: http://localhost:8080/"

@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026 unkernel contributors
+
+[Unit]
+Description=Unkernel console
+After=kw-net.service
+
+[Service]
+ExecStartPre=/usr/lib/kw/welcome
+ExecStart=/usr/bin/kwtty login
+StandardInput=tty-force
+StandardOutput=tty
+StandardError=tty
+TTYPath=/dev/hvc0
+Restart=always
+RestartSec=1
+KillSignal=SIGHUP
+TimeoutStopSec=3

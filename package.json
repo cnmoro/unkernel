@@ -6,7 +6,7 @@
   "author": "Pooya Parsa <pooya@pi0.io>",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/pithings/unkernel.git"
+    "url": "git+https://github.com/cnmoro/unkernel.git"
   },
   "type": "module",
   "sideEffects": false,

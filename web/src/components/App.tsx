@@ -14,6 +14,7 @@ import { KW } from "../kw.ts";
 import { installShortcuts } from "../shortcuts.ts";
 import { ui$, useStore } from "../store.ts";
 import { Bar } from "./Bar.tsx";
+import { Desktop } from "./Desktop.tsx";
 import { Display } from "./Display.tsx";
 import { Keys } from "./Keys.tsx";
 import { Launchpad } from "./Launcher.tsx";
@@ -33,6 +34,7 @@ export function App() {
 	const cfg = KW.config;
 	const state = useStore((s) => s.state);
 	const app = useRef<HTMLDivElement>(null);
+	const [desktop, setDesktop] = useState(false);
 	const [stage, setStageEl] = useState<HTMLElement | null>(null);
 
 	useEffect(() => setStage(stage), [stage]);
@@ -51,11 +53,12 @@ export function App() {
 						<TermHost />
 						<Splash />
 						<ResumeCard />
+						{desktop && state === "running" && <Desktop onClose={() => { setDesktop(false); KW.term?.focus(); }} />}
 					</main>
 					<Preview />
 				</div>
 				<Keys />
-				<Bar />
+				<Bar onDesktop={cfg.guest === "debian" && !desktop && state === "running" ? () => setDesktop(true) : undefined} />
 				{/* Over the stage, or rotated over the whole page (status line included). */}
 				<Display stage={stage} />
 			</div>

@@ -10,6 +10,7 @@
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { App } from "./components/App.tsx";
+import { chooseBootStorage } from "./components/BootStorage.tsx";
 import { readConfig } from "./config.ts";
 import { KW } from "./kw.ts";
 import { previewEscape } from "./preview.ts";
@@ -99,6 +100,7 @@ for (const e of KW.errors.slice()) ui.onError(e);
 if (ui.state() !== "error") {
 	preflight().then(async (ok) => {
 		if (!ok) return;
+		await chooseBootStorage();
 		ui.splash("Loading", "Boot script…");
 		const timer = setTimeout(() => {
 			if (!KW.started) ui.fail("watchdog", "The boot module did not start within 20 s", "No error was reported; module scripts may be blocked or very slow to load.");

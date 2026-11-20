@@ -45,7 +45,7 @@ const USAGE = `Usage: unkernel [kernel.wasm | --kernel kernel.wasm] [--distro al
        [--mount HOSTDIR:GUESTPATH[:ro]]... [--forward HOSTPORT:GUESTPORT]... [--wasi]
        [--restore FILE]
 
-With no arguments it boots Alpine on the bundled kernel, interactive on this
+With no arguments it boots Debian on the bundled kernel, interactive on this
 terminal; Ctrl-] quits. The bundled kernel (unkernel.wasm: vmlinux32.wasm with
 a small base initramfs, its command line, the data disk template and the patch
 to the SMP kernel in custom sections) mounts a distro image read-only under an
@@ -53,7 +53,7 @@ overlay root and runs its /sbin/init; the root's changes go to the data disk's
 /data/distros/NAME/ with --data, else to memory. Without a distro it starts the
 base shell (busybox and the kw tools).
 
---distro picks the distro image: alpine (the default) or debian, none (the
+--distro picks the distro image: alpine or debian (the default), none (the
 base shell), an image FILE, or an http(s) URL served with Range support. An
 image is an erofs or ext4 file system labelled kwroot, attached read-only as
 /dev/wda, before any --disk and --data, and never written. A NAME is, in a
@@ -238,13 +238,13 @@ if (restorePath) {
 		process.exit(1);
 	}
 }
-// --distro NAME|FILE|URL|none; by default alpine, unless the boot is a custom
+// --distro NAME|FILE|URL|none; by default debian, unless the boot is a custom
 // one (--initrd, --append, --disk). A restore defaults to the distro image the
 // snapshot names (its path or URL), if it had one.
 const distroArg = opt("distro");
 const snapDistro = restore?.disks[0]?.identity.startsWith("distro ") ? restore.disks[0].name : undefined;
 const distroOpt = distroArg === "none" ? undefined : distroArg ?? (restore ? snapDistro
-	: initrdArg !== undefined || appendArg !== undefined || diskSpecs.length ? undefined : "alpine");
+	: initrdArg !== undefined || appendArg !== undefined || diskSpecs.length ? undefined : "debian");
 // --disk without --distro boots root=/dev/wda without an initramfs (unless --initrd says otherwise).
 const diskBoot = diskSpecs.length > 0 && !distroOpt;
 const initrdOpt = initrdArg ?? (diskBoot ? "none" : "bundled");

@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026 unkernel contributors
+
+[Unit]
+Description=Unkernel Xfce desktop
+After=kw-setup.service
+
+[Service]
+User=user
+RuntimeDirectory=kw-desktop
+RuntimeDirectoryMode=0700
+Environment=XDG_RUNTIME_DIR=/run/kw-desktop
+Environment=XAUTHORITY=/run/kw-desktop/Xauthority
+ExecStart=/usr/local/bin/kw-desktop
+KillMode=mixed
+TimeoutStopSec=10

@@ -5,20 +5,15 @@
 # (guest/lib/image.sh), the read-only root that the base initramfs mounts
 # under the root overlay: the debian:trixie-slim arm64 root file system,
 # Debian's own builds, with apt and debconf set up for a slow CPU and
-# nobody at the prompt, and a bash PID 1. The kw guest tools and the
+# nobody at the prompt, and systemd as PID 1. The kw guest tools and the
 # runtime its init calls (/usr/lib/kw/: mounts, network by DHCP, welcome,
 # shutdown) come from the base's kw layer. No pre-overlay hook. The files
 # unkernel adds are in rootfs/, at their installed paths
 # (guest/lib/stage.sh: install_tree).
 #
-#   /sbin/init                -> /usr/local/sbin/kw-init (bash; Debian's
-#                             /sbin is a link to /usr/sbin): the kw layer's
-#                             rc, welcome and net, a login shell on hvc0 and
-#                             kwtty serve (respawned); poweroff, halt and
-#                             reboot in /usr/local/sbin signal it, and it
-#                             runs the layer's shutdown, then reboot(2);
-#                             services: sysv-rc's runlevels 2, then 0 or 6
-#                             (/usr/sbin/runlevel; no policy-rc.d)
+#   /sbin/init                -> ../lib/systemd/systemd (systemd-sysv):
+#                             kw units set up devices, networking and
+#                             console and vsock sessions.
 #   /usr/lib/kw-distro        "debian"
 #   /usr/lib/kw-image         debian-<version>-<hash of the tree>
 #   /var/lib/apt/lists        the package lists of the image's date, as
@@ -198,9 +193,11 @@ install_common "$stage"
 # The packages the image comes with, on top of the tarball's (with their
 # dependencies, no recommends). Adding one is adding its name here.
 # libatomic1: the official Node.js build links it (the kw layer's node shim).
-# sysv-rc (with insserv and startpar): the service runner kw-init drives
-# (below, and rootfs/usr/local/sbin/kw-init).
-DEBIAN_PACKAGES="curl ca-certificates unzip procps less vim-tiny xz-utils zstd iproute2 htop tmux sudo libatomic1 sysv-rc"
+DEBIAN_PACKAGES="curl ca-certificates unzip procps less vim-tiny xz-utils zstd iproute2 htop tmux sudo libatomic1"
+DEBIAN_PACKAGES+=" systemd-sysv dbus dbus-x11 libpam-systemd"
+DEBIAN_PACKAGES+=" tigervnc-standalone-server xinit xauth xfonts-base fonts-dejavu-core"
+DEBIAN_PACKAGES+=" xfce4-session xfwm4 xfdesktop4 xfce4-panel xfce4-settings thunar xfce4-terminal adwaita-icon-theme"
+DEBIAN_PACKAGES+=" git build-essential pkg-config python3 ripgrep"
 # Both are made by the image's own programs: the tree as it is at that
 # point becomes a first image (erofs, uncompressed), which boots on the
 # distroless bundle (guest/tools/vm-run.ts); files come out over exec's
@@ -278,7 +275,7 @@ else
 	echo "debian: installing $DEBIAN_PACKAGES ($n packages) in the image" >&2
 	genimage
 	u=/run/kw-lower/kw/tmp/upper
-	node "$guest/tools/vm-run.ts" "$kernel" "$distro_out/$gen.erofs" --timeout 900 \
+	node "$guest/tools/vm-run.ts" "$kernel" "$distro_out/$gen.erofs" --mem 2048 --timeout 900 \
 		--get /tmp/kw-pkgs.tar="$distro_out/$gen.pkgs.tar" --get /tmp/kw-gone="$distro_out/$gen.gone" "
 		set -e
 		[ -d $u ]
@@ -287,7 +284,6 @@ else
 			$DEBIAN_PACKAGES > /tmp/kw-log 2>&1 ||
 			{ cat /tmp/kw-log; exit 1; }
 		[ \"\$(dpkg-query -W -f '\${db:Status-Abbrev}\n' $DEBIAN_PACKAGES | sort -u)\" = 'ii ' ]
-		update-rc.d sudo disable >> /tmp/kw-log 2>&1 || { cat /tmp/kw-log; exit 1; }
 		cd $u
 		find . -mindepth 1 -cnewer /tmp/kw-stamp -type c | sort > /tmp/kw-gone
 		find . -mindepth 1 -cnewer /tmp/kw-stamp ! -type c ! -path './var/log/*' \\
@@ -300,13 +296,20 @@ else
 	rm -f "$distro_out/$gen".{erofs,tar,id,uris,sums,pkgs.tar,gone}
 fi
 
-# --- services ------------------------------------------------------------------
-# Debian's packages enable their init scripts (update-rc.d: insserv's links
-# in /etc/rcN.d) and start them (invoke-rc.d), and kw-init runs runlevel 2
-# at boot. The image's policy-rc.d (docker's: exit 101, start nothing) goes,
-# so that an apt-get install starts its service as on a Debian system; it
-# stays for the build's own install above. sudo's script (enabled by the
-# build, disabled above) only clears /run/sudo, which is new at every boot.
+# The temporary image uses kw-init to run the package installation. In
+# the final image use the init link owned by systemd-sysv and its runlevel
+# reporting. Keep the local power commands for the passwordless console.
+if [ -x "$stage/usr/lib/systemd/systemd" ]; then
+	[ "$(readlink "$stage/usr/sbin/init")" = ../lib/systemd/systemd ] ||
+		{ echo "debian: systemd-sysv did not install its init link" >&2; exit 1; }
+	rm -f "$stage/usr/local/sbin/kw-init"
+	# Every writable guest creates its own machine identity on first boot.
+	install -m 444 /dev/null "$stage/etc/machine-id"
+	mkdir -p "$stage/var/lib/dbus"
+	ln -sfn /etc/machine-id "$stage/var/lib/dbus/machine-id"
+fi
+
+# Let invoke-rc.d and deb-systemd-invoke start packages installed after boot.
 policy="$stage/usr/sbin/policy-rc.d"
 [ ! -e "$policy" ] || { grep -qx 'exit 101' "$policy" && rm "$policy"; } ||
 	{ echo "debian: $policy is not docker's exit 101 (upstream changed it?)" >&2; exit 1; }

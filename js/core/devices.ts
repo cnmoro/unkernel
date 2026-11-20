@@ -76,6 +76,8 @@ export interface DataDiskSpec extends SpecCommon {
 	name?: string;
 	version?: string;
 	snapshotLimit?: number;
+	/** A user-selected directory for the persistent data disk (browser). */
+	folder?: FileSystemDirectoryHandle;
 }
 
 export type DiskSpec = FileDiskSpec | HttpDiskSpec | DataDiskSpec;

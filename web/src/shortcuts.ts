@@ -155,6 +155,7 @@ export function installShortcuts(): () => void {
 	const ui = KW.ui!, $ = ui$();
 
 	function onKeyDown(e: KeyboardEvent) {
+		if ((e.target as Element | null)?.closest?.("#desktop-screen")) return;
 		const s = $.get();
 		if (s.ask) return; // the confirm dialog (a modal <dialog>) takes its keys itself
 		if (s.prefix) {

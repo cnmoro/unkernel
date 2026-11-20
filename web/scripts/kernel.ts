@@ -77,7 +77,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { smpKernelFromBundle, withoutSmpPatch } from "../../js/core/kpatch.ts";
 
-const REPO = "pithings/unkernel";
+const REPO = process.env.KW_KERNEL_REPO || "pithings/unkernel";
 const GITHUB_API = (process.env.KW_GITHUB_API || "https://api.github.com").replace(/\/+$/, "");
 const GITHUB = (process.env.KW_GITHUB || "https://github.com").replace(/\/+$/, "");
 const ROOT = fileURLToPath(new URL("../../", import.meta.url));

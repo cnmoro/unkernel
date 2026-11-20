@@ -21,7 +21,7 @@ import { fileURLToPath } from "node:url";
 import type { DistroIndex, DistroIndexEntry } from "../core/distro.ts";
 
 /** The GitHub repository whose releases carry the distro images. */
-export const RELEASE_REPO = "pithings/unkernel";
+export const RELEASE_REPO = "cnmoro/unkernel";
 
 /** What fetchDistro() is doing, for a progress display. */
 export interface FetchDistroProgress {
@@ -44,7 +44,7 @@ export interface FetchDistroOptions {
 	/**
 	 * The release directory holding distros.json and the images, as a URL
 	 * (ending in "/" or not). Default: $UNKERNEL_RELEASE_URL, else
-	 * https://github.com/pithings/unkernel/releases/download/v<version>/ for
+	 * https://github.com/cnmoro/unkernel/releases/download/v<version>/ for
 	 * the package's version.
 	 */
 	releaseUrl?: string;

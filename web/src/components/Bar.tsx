@@ -162,7 +162,7 @@ function More() {
 	);
 }
 
-export function Bar() {
+export function Bar({ onDesktop }: { onDesktop?: () => void }) {
 	const ui = KW.ui!;
 	const label = useStore((s) => s.label);
 	const state = useStore((s) => s.state);
@@ -205,6 +205,7 @@ export function Bar() {
 				) : <Seg on={panel === "keys"} title={`Keyboard shortcuts: ${PREFIX}, then a key (${PREFIX} ?)`} label="Keyboard shortcuts" onClick={() => ui.togglePanel("keys")} className="text-[11px] opacity-50 hover:opacity-100 max-sm:hidden">{PREFIX_SHORT}</Seg>}
 			</div>
 			<div className="flex flex-none items-stretch gap-px">
+				{onDesktop && <Seg id="bar-desktop" title="Open Xfce desktop" label="Desktop" onClick={onDesktop}><DisplayIcon /></Seg>}
 				{display.attached && (
 					<Seg id="bar-display" on={!panel && picture} title={picture ? "Show the terminal" : "Show the display"} hint="d" onClick={toggleDisplay}>
 						<DisplayIcon />

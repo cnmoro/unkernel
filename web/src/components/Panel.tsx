@@ -128,9 +128,11 @@ function DataDisk() {
 			<p id="data-safe-note" hidden={!safeNote} className="mt-2 border-l-2 border-warn pl-3 text-fg">{safeNote}</p>
 			<div className="mt-3 flex flex-wrap gap-2">
 				<button id="data-export" type="button" className="btn btn-sm" title="Download /data as a .kwsparse.gz file" onClick={() => ui.dataExport()}>Export</button>
-				<button id="data-import" type="button" className="btn btn-sm" title="Replace /data with an exported file"
-					onClick={async () => { if (await ui.dataImport() && file.current) { file.current.value = ""; file.current.click(); } }}>Import…</button>
-				<button id="data-reset" type="button" className="btn btn-sm" title="Start /data again from an empty file system" onClick={() => ui.dataReset()}>Reset</button>
+				{!KW.dataFolder && <>
+					<button id="data-import" type="button" className="btn btn-sm" title="Replace /data with an exported file"
+						onClick={async () => { if (await ui.dataImport() && file.current) { file.current.value = ""; file.current.click(); } }}>Import…</button>
+					<button id="data-reset" type="button" className="btn btn-sm" title="Start /data again from an empty file system" onClick={() => ui.dataReset()}>Reset</button>
+				</>}
 				<button id="data-safe" type="button" className="btn btn-sm"
 					title={safe ? "Reboot with the overlay root and your changes on the data disk" : "Reboot with the plain image as the root (kw.root=initramfs), to repair an overlay root"}
 					onClick={() => ui.safeModeToggle()}>{safe ? "Leave safe mode" : "Safe mode"}</button>

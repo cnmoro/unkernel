@@ -82,6 +82,7 @@ export interface KWGlobal {
 	memActualMiB?: number;
 	jitStats?: () => JitStats;
 	/** The data disk, once attached (null: none). */
+	dataFolder?: FileSystemDirectoryHandle;
 	dataDisk?: CowDisk | null;
 	/** Ask the guest to sync its file systems to the persistent disks; true once confirmed. */
 	sync?: (opts?: { timeout?: number }) => Promise<boolean>;
