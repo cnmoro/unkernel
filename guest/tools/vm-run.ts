@@ -108,7 +108,8 @@ try {
 	console.error(`vm-run: ${(e as Error).message}`);
 	code = 1;
 }
-vm.write("\npoweroff\n");
+// systemd can start kwtty before the interactive shell reads the console.
+void vm.exec("poweroff", [], { timeout: 30_000, user: "root" }).catch(() => {});
 const end = await Promise.race([vm.exited, new Promise((r) => setTimeout(r, 30000))]);
 if (!end) vm.stop({ reason: "vm-run: no poweroff" });
 process.exit(code);

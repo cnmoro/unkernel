@@ -79,6 +79,19 @@ for (const name of ["alpine", "debian"]) {
 		const boot = async (t: { after(fn: () => unknown): void }, opts: NonNullable<Parameters<typeof createKernel>[0]>) => {
 			const vm = await createKernel({ kernel: module, memoryMiB: MEM, log: () => {}, ...opts });
 			t.after(() => vm.stop({ reason: "test cleanup" }));
+			if (name === "debian" && !opts.restore) {
+				// systemd starts the exec bridge independently of the interactive shell.
+				const ready = Promise.withResolvers<void>();
+				const decoder = new TextDecoder();
+				let tail = "";
+				const off = vm.onOutput((bytes) => {
+					tail = (tail + decoder.decode(bytes, { stream: true })).slice(-512);
+					if (tail.includes("⇒")) ready.resolve();
+				});
+				const timer = setTimeout(() => ready.reject(new Error("Debian console did not reach its prompt")), 30_000);
+				try { await ready.promise; }
+				finally { off(); clearTimeout(timer); }
+			}
 			return vm;
 		};
 
