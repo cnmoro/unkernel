@@ -195,7 +195,7 @@ install_common "$stage"
 # libatomic1: the official Node.js build links it (the kw layer's node shim).
 DEBIAN_PACKAGES="curl ca-certificates unzip procps less vim-tiny xz-utils zstd iproute2 htop tmux sudo libatomic1"
 DEBIAN_PACKAGES+=" systemd-sysv dbus dbus-x11 libpam-systemd"
-DEBIAN_PACKAGES+=" tigervnc-standalone-server xinit xauth xfonts-base fonts-dejavu-core"
+DEBIAN_PACKAGES+=" tigervnc-standalone-server xinit xauth x11-xserver-utils xfonts-base fonts-dejavu-core"
 DEBIAN_PACKAGES+=" xfce4-session xfwm4 xfdesktop4 xfce4-panel xfce4-settings thunar xfce4-terminal adwaita-icon-theme"
 DEBIAN_PACKAGES+=" git build-essential pkg-config python3 ripgrep"
 # Both are made by the image's own programs: the tree as it is at that
@@ -307,6 +307,11 @@ if [ -x "$stage/usr/lib/systemd/systemd" ]; then
 	install -m 444 /dev/null "$stage/etc/machine-id"
 	mkdir -p "$stage/var/lib/dbus"
 	ln -sfn /etc/machine-id "$stage/var/lib/dbus/machine-id"
+	# The remote X server draws in software. Xfce's compositor adds work
+	# and depends on display features that this guest does not provide.
+	session="$stage/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfce4-session.xml"
+	grep -q '<value type="string" value="xfwm4"/>' "$session"
+	sed -i '/<value type="string" value="xfwm4"\/>/a\        <value type="string" value="--compositor=off"/>' "$session"
 fi
 
 # Let invoke-rc.d and deb-systemd-invoke start packages installed after boot.

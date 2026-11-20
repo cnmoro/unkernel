@@ -76,7 +76,6 @@ export function Desktop({ onClose }: { onClose: () => void }) {
 				const rfb = new RFB(screen.current!, channel);
 				close = () => { rfb.disconnect(); channel.close(); };
 				rfb.scaleViewport = true;
-				rfb.resizeSession = true;
 				rfb.addEventListener("connect", () => setStatus(""));
 				rfb.addEventListener("disconnect", () => {
 					if (!abort.signal.aborted) setStatus("Desktop disconnected. Close this view to try again.");

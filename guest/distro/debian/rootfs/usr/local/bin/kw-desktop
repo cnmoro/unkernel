@@ -7,6 +7,6 @@ umask 077
 touch "$XAUTHORITY"
 xauth add :1 MIT-MAGIC-COOKIE-1 "$(mcookie)"
 # RFB stays inside the guest. The browser reaches it through the kwtty vsock bridge.
-exec xinit /usr/bin/dbus-run-session /usr/bin/xfce4-session -- \
+exec xinit /usr/bin/dbus-run-session /usr/local/libexec/kw-xfce -- \
 	/usr/bin/Xtigervnc :1 -geometry 1024x768 -depth 24 -auth "$XAUTHORITY" \
 	-nolisten tcp -localhost -UseIPv6=0 -rfbport 5901 -SecurityTypes None

@@ -1,0 +1,9 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026 unkernel contributors
+
+# Paint the remote display as soon as X is ready. Xfce sets its own wallpaper.
+xsetroot -solid "#203041"
+# Make a terminal available while the desktop starts its panel and file manager.
+xfce4-terminal --disable-server &
+exec startxfce4
