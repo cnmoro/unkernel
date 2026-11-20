@@ -2,11 +2,16 @@
 // Copyright (C) 2026 Pooya Parsa <pooya@pi0.io>
 // How much memory to give the kernel in a browser.
 
+/** The wasm32 kernel used by the browser can address 4 GiB. */
+export const MAX_BROWSER_MEMORY_MIB = 4096;
+
 /**
  * Sizes createKernel() tries, in order, when the requested memory cannot be
  * allocated (phones often lack the address space for 512 MiB).
  */
-export const DEFAULT_MEMORY_FALLBACK_MIB: readonly number[] = Object.freeze([384, 256, 192, 128, 96, 64]);
+export const DEFAULT_MEMORY_FALLBACK_MIB: readonly number[] = Object.freeze([
+	3584, 3072, 2560, 2048, 1536, 1024, 768, 512, 384, 256, 192, 128, 96, 64,
+]);
 
 /** A phone or tablet: a coarse pointer (touch) or a mobile user agent (the old page's rule). */
 export function isMobile(): boolean {

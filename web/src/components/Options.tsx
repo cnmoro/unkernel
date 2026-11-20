@@ -17,6 +17,7 @@
 // data-on or data-off value, so the options keep the values nextSettings() reads.
 import { useEffect, useRef, type ChangeEvent, type KeyboardEvent, type ReactNode } from "react";
 import { DEFAULT_CMDLINE, DEFAULT_DISTRO, DISTROS_OFFERED, webkitEngine } from "../config.ts";
+import { MAX_BROWSER_MEMORY_MIB } from "../sdk.ts";
 import { KW } from "../kw.ts";
 import { useStore, type Options as Opts } from "../store.ts";
 import { autoFont } from "../ui.ts";
@@ -117,7 +118,7 @@ function Slider({ id, name, label, value, stops, disabled, note, noteId, warnNot
 	);
 }
 
-const SIZES = [64, 128, 256, 512, 1024];
+const SIZES = [64, 128, 256, 512, 1024, 1536, 2048, 3072];
 const CPU_COUNTS = [1, 2, 4, 8, 16];
 const FONTS = [11, 12, 13, 14, 15, 16, 18];
 
@@ -139,13 +140,14 @@ export function Options() {
 	// Memory stops: the sizes, the one auto picks on this device (marked, and
 	// choosing it means auto) and a ?mem= that is none of them.
 	const mib = (n: number) => (n < 1024 ? `${n} MiB` : `${+(n / 1024).toFixed(1)} GiB`);
-	const sizes = [...new Set([...SIZES, cfg.memAutoMiB, ...(cfg.memParam ? [Number(cfg.memParam)] : [])])].sort((a, b) => a - b);
+	const sizes = [...new Set([...SIZES, cfg.memAutoMiB, ...(cfg.memParam && cfg.memParam !== "max" ? [Number(cfg.memParam)] : [])])].sort((a, b) => a - b);
 	const mem: Stop[] = sizes.map((n) => ({
 		value: n === cfg.memAutoMiB ? "auto" : String(n),
 		tick: n < 1024 ? String(n) : `${+(n / 1024).toFixed(1)}G`,
 		label: n === cfg.memAutoMiB ? `Auto (${mib(n)})` : mib(n),
 		note: n === cfg.memAutoMiB ? "auto" : undefined,
 	}));
+	mem.push({ value: "max", tick: "4G", label: `Maximum (${mib(MAX_BROWSER_MEMORY_MIB)})` });
 	const memValue = o.mem === String(cfg.memAutoMiB) ? "auto" : o.mem;
 
 	// CPUs: 1, 2, 4, 8, 16 up to the host's threads, the host's threads themselves (the most
@@ -216,7 +218,8 @@ export function Options() {
 
 			<div className="col-span-full mt-3 grid grid-cols-[repeat(auto-fit,minmax(200px,1fr))] items-start gap-x-12 gap-y-5">
 				<Slider id="opt-cpus" name="cpus" label="CPUs" value={o.cpus} stops={cpus} disabled={!!cfg.smpBlocked} note={cpuNote} noteId="opt-cpus-note" warnNote={cpuWarn} />
-				<Slider id="opt-mem" name="mem" label="Memory" value={memValue} stops={mem} />
+				<Slider id="opt-mem" name="mem" label="Memory" value={memValue} stops={mem}
+					note="If the browser cannot allocate the selected size, the system tries less RAM." noteId="opt-mem-note" />
 			</div>
 			<Field label="Kernel command line" wide>
 				<input id="opt-append" name="append" type="text" autoCapitalize="off" autoComplete="off" spellCheck={false} placeholder={DEFAULT_CMDLINE}

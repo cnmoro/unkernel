@@ -13,7 +13,7 @@ import { webPlatform } from "../../js/web/platform.ts";
 import { kernelSmpUrl, kernelUrl } from "virtual:unkernel-kernel";
 
 export * from "../../js/core/index.ts";
-export { DEFAULT_MEMORY_FALLBACK_MIB, autoMemoryMiB } from "../../js/web/memory.ts";
+export { DEFAULT_MEMORY_FALLBACK_MIB, MAX_BROWSER_MEMORY_MIB, autoMemoryMiB } from "../../js/web/memory.ts";
 export { DATA_DISK_NAME, importDataDisk, openDataDisk, openDistroDisk, resetDataDisk } from "../../js/web/disk.ts";
 export { openFolderDisk, folderDiskSize, compactFolderDisk, DEFAULT_FOLDER_DISK_GIB, MAX_FOLDER_DISK_GIB } from "../../js/web/folder-disk.ts";
 export { webCpuBlocker } from "../../js/web/cpu.ts";

@@ -14,6 +14,7 @@
 //
 //   ?mem=MiB                           kernel memory (default: auto, from the SDK's autoMemoryMiB():
 //                                      256 on phones, 512 otherwise, less on low-memory devices)
+//   ?mem=max                           try the wasm32 limit, then smaller allocations
 //   ?append=<cmdline>                  kernel command line
 //   ?net=0                             no network device (else: the Wisp server(s), default:
 //                                      the project's)
@@ -81,7 +82,7 @@
 //                                      warm pre-installs them, step ids pick a subset
 //                                      (showcase.ts); read in launcher.ts
 //   ?simulate=nojspi,oom,lowmem        URL only: fake a failure (for tests)
-import { DEFAULT_MEMORY_FALLBACK_MIB, autoMemoryMiB, kernelSmpUrl, kernelUrl, webCpuBlocker } from "./sdk.ts";
+import { DEFAULT_MEMORY_FALLBACK_MIB, MAX_BROWSER_MEMORY_MIB, autoMemoryMiB, kernelSmpUrl, kernelUrl, webCpuBlocker } from "./sdk.ts";
 import { distros as DISTROS } from "virtual:unkernel-kernel";
 
 /** A distro image the page offers (virtual:unkernel-kernel). */
@@ -150,7 +151,7 @@ export interface Config {
 	memWhy: string;
 	/** What auto would pick on this device, even when ?mem= is given. */
 	memAutoMiB: number;
-	/** ?mem= as given, or null for auto. */
+	/** The boot memory setting as a MiB string or "max", or null for auto. */
 	memParam: string | null;
 	memFallbackMiB: number[];
 	cmdline: string;
@@ -266,9 +267,11 @@ export function readConfig(search: string = location.search, saved: Record<strin
 	const coarse = typeof matchMedia === "function" && matchMedia("(pointer: coarse)").matches;
 	const mobileUA = /Android|iPhone|iPad|Mobi/i.test(navigator.userAgent);
 	const mobile = coarse || mobileUA;
-	const memParam = params.get("mem");
+	const requestedMemory = params.get("mem");
+	const numericMemory = Number(requestedMemory);
+	const fixedMemory = Number.isFinite(numericMemory) && numericMemory > 0;
+	const maximumMemory = requestedMemory === "max" || (fixedMemory && numericMemory >= MAX_BROWSER_MEMORY_MIB);
 	const auto = autoMemoryMiB({ mobile });
-	const fixed = memParam !== null && Number(memParam) > 0;
 	const append = params.get("append");
 	const root = params.get("root") === "initramfs" ? "initramfs" : null;
 	const wispParam = params.get("wisp");
@@ -312,10 +315,10 @@ export function readConfig(search: string = location.search, saved: Record<strin
 		distroWhy,
 		guest: distro?.name ?? "none",
 		append: append || null,
-		memMiB: fixed ? Number(memParam) : auto.mib,
-		memWhy: fixed ? `set to ${memParam} MiB` : auto.why,
+		memMiB: maximumMemory ? MAX_BROWSER_MEMORY_MIB : fixedMemory ? numericMemory : auto.mib,
+		memWhy: maximumMemory ? "maximum for this web kernel" : fixedMemory ? `set to ${numericMemory} MiB` : auto.why,
 		memAutoMiB: auto.mib,
-		memParam: fixed ? memParam : null,
+		memParam: maximumMemory ? "max" : fixedMemory ? String(numericMemory) : null,
 		memFallbackMiB: [...DEFAULT_MEMORY_FALLBACK_MIB],
 		cmdline: root ? `${append || DEFAULT_CMDLINE} kw.root=${root}` : append || DEFAULT_CMDLINE,
 		baseCmdline: append || DEFAULT_CMDLINE,
