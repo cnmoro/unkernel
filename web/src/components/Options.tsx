@@ -119,6 +119,7 @@ function Slider({ id, name, label, value, stops, disabled, note, noteId, warnNot
 }
 
 const SIZES = [64, 128, 256, 512, 1024, 1536, 2048, 3072];
+const ZRAM_SIZES = [0, 64, 128, 256, 512, 1024, 1536, 2048, 3072, 4096];
 const CPU_COUNTS = [1, 2, 4, 8, 16];
 const FONTS = [11, 12, 13, 14, 15, 16, 18];
 
@@ -149,6 +150,7 @@ export function Options() {
 	}));
 	mem.push({ value: "max", tick: "4G", label: `Maximum (${mib(MAX_BROWSER_MEMORY_MIB)})` });
 	const memValue = o.mem === String(cfg.memAutoMiB) ? "auto" : o.mem;
+	const zramSizes = [...new Set([...ZRAM_SIZES, ...(cfg.zram === "auto" ? [] : [Number(cfg.zram)])])].sort((a, b) => a - b);
 
 	// CPUs: 1, 2, 4, 8, 16 up to the host's threads, the host's threads themselves (the most
 	// there is to try), the suggested count and a ?cpus= that is none of them. Past the
@@ -221,6 +223,13 @@ export function Options() {
 				<Slider id="opt-mem" name="mem" label="Memory" value={memValue} stops={mem}
 					note="If the browser cannot allocate the selected size, the system tries less RAM." noteId="opt-mem-note" />
 			</div>
+			{o.distro === "debian" && <Field label="Compressed swap (zram)">
+				<select id="opt-zram" name="zram" value={o.zram} onChange={onField} className="field h-8 px-2.5 text-[12.5px]" aria-describedby="opt-zram-note">
+					<option value="auto">Auto (half of guest RAM)</option>
+					{zramSizes.map((n) => <option key={n} value={n}>{n ? mib(n) : "Off"}</option>)}
+				</select>
+				<small id="opt-zram-note" className="text-[11.5px] text-faint">Swap capacity before compression. Uses guest RAM as needed.</small>
+			</Field>}
 			<Field label="Kernel command line" wide>
 				<input id="opt-append" name="append" type="text" autoCapitalize="off" autoComplete="off" spellCheck={false} placeholder={DEFAULT_CMDLINE}
 					value={o.append} onChange={onField} onKeyDown={enter} className="field h-8 px-2.5 text-[12.5px]" />

@@ -1,0 +1,33 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026 unkernel contributors
+
+set -eu
+
+size=auto
+read -ra cmdline </proc/cmdline
+for arg in "${cmdline[@]}"; do
+	case "$arg" in
+		kw.zram=*) size=${arg#*=} ;;
+	esac
+done
+
+device=/dev/zram0
+sys=/sys/block/zram0
+case "$size" in
+	0) exit 0 ;;
+	auto) size=$(awk '/^MemTotal:/ {print int($2 / 2048)}' /proc/meminfo) ;;
+	*[!0-9]*|'') echo "kw-zram: expected auto or a size in MiB" >&2; exit 1 ;;
+esac
+if [ "${#size}" -gt 4 ] || [ "$size" -lt 1 ] || [ "$size" -gt 4096 ]; then
+	echo "kw-zram: size must be 1 to 4096 MiB (0 disables swap)" >&2
+	exit 1
+fi
+
+# Leave a device initialized by an administrator or another service alone.
+[ "$(cat "$sys/disksize")" = 0 ] || exit 0
+printf '%sM\n' "$size" >"$sys/disksize"
+if ! /usr/sbin/mkswap "$device" || ! /usr/sbin/swapon --priority 100 "$device"; then
+	printf '1\n' >"$sys/reset"
+	exit 1
+fi

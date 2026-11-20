@@ -130,6 +130,7 @@ The page takes a few URL parameters:
 | Parameter | Does |
 | --- | --- |
 | `?mem=512` / `?mem=max` | Guest memory in MiB, up to 4096. Use `max` to try 4 GiB and fall back to smaller allocations if needed. |
+| `?zram=512` / `?zram=0` | Debian compressed swap capacity in MiB. The default is half the guest’s usable RAM. Use `0` to turn it off. |
 | `?append=...` | Extra kernel command line |
 | `?net=0` | Boot without a network |
 | `?wisp=wss://...` | Use your own [Wisp](https://github.com/MercuryWorkshop/wisp-protocol) proxy |

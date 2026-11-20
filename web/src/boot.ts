@@ -914,7 +914,10 @@ export function start(): void {
 		ok(`Found the base initramfs (${fmtMiB(b.length)})`);
 		// The bundle's own command line unless ?append= gives one, with ?root= (kw.root=) after it.
 		if (!cfg.append && bundle.cmdline) cfg.cmdline = cfg.root ? `${bundle.cmdline} kw.root=${cfg.root}` : bundle.cmdline;
-		if (folder && cfg.guest === "debian") cfg.cmdline += " kw.growdata=1";
+		if (cfg.guest === "debian") {
+			if (folder) cfg.cmdline += " kw.growdata=1";
+			if (cfg.zram !== "auto") cfg.cmdline += ` kw.zram=${cfg.zram}`;
+		}
 		if (distroOpening) {
 			try {
 				const { d, ms } = await distroOpening;

@@ -44,13 +44,14 @@
   with `vm_map_ram`/`vmap`, which VMALLOC_FLAT cannot, so lz4 files read
   as ENOMEM and an lz4 image with big pclusters (`mkfs.erofs -C`) does
   not mount. microLZMA is off (+21 KB, +8 KB gzip).
+- Built-in swap and zram with lzo-rle allow Debian to enable compressed swap at boot.
 - `FRAME_WARN=3072`: clang's wasm backend gives each variadic call its own
   16-byte stack slot (`snmp_seq_show` 2304 bytes, all others under 1024).
   The kernel builds without warnings; keep it that way.
 
 ## What is off
 
-- No netfilter. BPF_SYSCALL, KEYS, IPV6, SECCOMP, modules, swap and
+- No netfilter. BPF_SYSCALL, KEYS, IPV6, SECCOMP, modules and
   kallsyms are off.
 - COREDUMP must stay off until the arch has `elf_core_copy_task_fpregs` and
   arm64 core notes (the registers from kwemu): without them a fault with a

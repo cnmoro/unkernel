@@ -15,6 +15,7 @@
 //   ?mem=MiB                           kernel memory (default: auto, from the SDK's autoMemoryMiB():
 //                                      256 on phones, 512 otherwise, less on low-memory devices)
 //   ?mem=max                           try the wasm32 limit, then smaller allocations
+//   ?zram=MiB | auto                 Debian compressed swap, default half usable RAM (0: off)
 //   ?append=<cmdline>                  kernel command line
 //   ?net=0                             no network device (else: the Wisp server(s), default:
 //                                      the project's)
@@ -109,7 +110,7 @@ export const DEFAULT_CMDLINE = "console=hvc0 rdinit=/init";
 /** localStorage: the saved settings (the header above), a JSON object of strings. */
 export const SETTINGS_KEY = "kw.settings";
 /** The settings' names. ?net=0 is read as ?wisp=0 and never saved. */
-export const SETTING_NAMES: readonly string[] = ["mem", "append", "net", "wisp", "jit", "verbose", "display", "sound", "data", "distro", "root", "worker", "shared", "cpus"];
+export const SETTING_NAMES: readonly string[] = ["mem", "zram", "append", "net", "wisp", "jit", "verbose", "display", "sound", "data", "distro", "root", "worker", "shared", "cpus"];
 
 /** The saved settings ({} where there are none or localStorage refuses). */
 export function loadSettings(): Record<string, string> {
@@ -154,6 +155,8 @@ export interface Config {
 	/** The boot memory setting as a MiB string or "max", or null for auto. */
 	memParam: string | null;
 	memFallbackMiB: number[];
+	/** Debian zram capacity in MiB, or "auto". */
+	zram: string;
 	cmdline: string;
 	/** The command line as ?append= sets it (cmdline without kw.root=). */
 	baseCmdline: string;
@@ -272,6 +275,9 @@ export function readConfig(search: string = location.search, saved: Record<strin
 	const fixedMemory = Number.isFinite(numericMemory) && numericMemory > 0;
 	const maximumMemory = requestedMemory === "max" || (fixedMemory && numericMemory >= MAX_BROWSER_MEMORY_MIB);
 	const auto = autoMemoryMiB({ mobile });
+	const zramParam = params.get("zram");
+	const zram = zramParam !== null && /^\d{1,4}$/.test(zramParam) && Number(zramParam) <= MAX_BROWSER_MEMORY_MIB
+		? String(Number(zramParam)) : "auto";
 	const append = params.get("append");
 	const root = params.get("root") === "initramfs" ? "initramfs" : null;
 	const wispParam = params.get("wisp");
@@ -320,6 +326,7 @@ export function readConfig(search: string = location.search, saved: Record<strin
 		memAutoMiB: auto.mib,
 		memParam: maximumMemory ? "max" : fixedMemory ? String(numericMemory) : null,
 		memFallbackMiB: [...DEFAULT_MEMORY_FALLBACK_MIB],
+		zram,
 		cmdline: root ? `${append || DEFAULT_CMDLINE} kw.root=${root}` : append || DEFAULT_CMDLINE,
 		baseCmdline: append || DEFAULT_CMDLINE,
 		cmdlineGiven: !!append || !!root,

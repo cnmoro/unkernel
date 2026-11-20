@@ -370,7 +370,7 @@ MTE, PAC, BTI, GCS or POE.
   to user mode clears it (The kwemu contract), as ERET does on arm64 and
   qemu-user does.
 - ptrace has no regsets (`PTRACE_GETREGSET` fails), so strace and gdb do
-  not work. No core dumps, seccomp, modules, swap or kallsyms (config.md).
+  not work. No core dumps, seccomp, modules or kallsyms (config.md).
   A wasm trap in the kernel ends the session.
 
 ## Two builds: wasm64 and lowered

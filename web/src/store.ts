@@ -111,6 +111,7 @@ export interface UiState {
 
 export interface Options {
 	mem: string;
+	zram: string;
 	net: "default" | "custom" | "off";
 	wisp: string;
 	jit: "on" | "off";

@@ -1,0 +1,24 @@
+From d29de17d23fe5aa925ed85806fc5251cd4cc583c Mon Sep 17 00:00:00 2001
+From: unkernel contributors <unkernel@localhost>
+Date: Fri, 20 Nov 2026 20:34:52 -0300
+Subject: [PATCH] wasm: enable zram swap
+
+---
+ arch/wasm/configs/kw_defconfig | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/arch/wasm/configs/kw_defconfig b/arch/wasm/configs/kw_defconfig
+index a7ffb040f..e73743a51 100644
+--- a/arch/wasm/configs/kw_defconfig
++++ b/arch/wasm/configs/kw_defconfig
+@@ -38,7 +38,9 @@ CONFIG_USERFAULTFD=y
+ # CONFIG_IO_URING is not set
+ # CONFIG_BPF_SYSCALL is not set
+ # CONFIG_COREDUMP is not set
+-# CONFIG_SWAP is not set
++CONFIG_SWAP=y
++CONFIG_ZRAM=y
++CONFIG_ZRAM_DEF_COMP_LZORLE=y
+ # CONFIG_COMPAT_BRK is not set
+ # CONFIG_MODULES is not set
+ # CONFIG_SECCOMP is not set

@@ -1,0 +1,267 @@
+From d0efaec390ed6071946792c7688330dc3d5b7b85 Mon Sep 17 00:00:00 2001
+From: unkernel contributors <unkernel@localhost>
+Date: Fri, 20 Nov 2026 20:54:56 -0300
+Subject: [PATCH] zram: allocate slot metadata in chunks with flat vmalloc
+
+Flat vmalloc requires physically contiguous pages, so the slot table for a multi-GiB disk can exceed the maximum allocation order. Preallocate slot entries with genradix on these builds so I/O paths can continue to use stable pointers without allocating metadata.
+---
+ drivers/block/zram/zram_drv.c | 94 +++++++++++++++++++++++++----------
+ drivers/block/zram/zram_drv.h |  5 ++
+ 2 files changed, 74 insertions(+), 25 deletions(-)
+
+diff --git a/drivers/block/zram/zram_drv.c b/drivers/block/zram/zram_drv.c
+index 4ba0f77b2..21769f8e1 100644
+--- a/drivers/block/zram/zram_drv.c
++++ b/drivers/block/zram/zram_drv.c
+@@ -58,6 +58,16 @@ static const struct block_device_operations zram_devops;
+ 
+ static void slot_free(struct zram *zram, unsigned long index);
+ 
++static inline struct zram_table_entry *slot_entry(struct zram *zram,
++						   unsigned long index)
++{
++#ifdef CONFIG_VMALLOC_FLAT
++	return genradix_ptr_inlined(&zram->table, index);
++#else
++	return &zram->table[index];
++#endif
++}
++
+ /*
+  * entry locking rules:
+  *
+@@ -72,7 +82,7 @@ static void slot_free(struct zram *zram, unsigned long index);
+  */
+ static __must_check bool slot_trylock(struct zram *zram, unsigned long index)
+ {
+-	unsigned long *lock = &zram->table[index].__lock;
++	unsigned long *lock = &slot_entry(zram, index)->__lock;
+ 
+ 	if (!test_and_set_bit_lock(ZRAM_ENTRY_LOCK_BIT, lock)) {
+ 		mutex_acquire(&zram->table_lock_map, 0, 1, _RET_IP_);
+@@ -85,7 +95,7 @@ static __must_check bool slot_trylock(struct zram *zram, unsigned long index)
+ 
+ static void slot_lock(struct zram *zram, unsigned long index)
+ {
+-	unsigned long *lock = &zram->table[index].__lock;
++	unsigned long *lock = &slot_entry(zram, index)->__lock;
+ 
+ 	mutex_acquire(&zram->table_lock_map, 0, 0, _RET_IP_);
+ 	wait_on_bit_lock(lock, ZRAM_ENTRY_LOCK_BIT, TASK_UNINTERRUPTIBLE);
+@@ -94,7 +104,7 @@ static void slot_lock(struct zram *zram, unsigned long index)
+ 
+ static void slot_unlock(struct zram *zram, unsigned long index)
+ {
+-	unsigned long *lock = &zram->table[index].__lock;
++	unsigned long *lock = &slot_entry(zram, index)->__lock;
+ 
+ 	mutex_release(&zram->table_lock_map, _RET_IP_);
+ 	clear_and_wake_up_bit(ZRAM_ENTRY_LOCK_BIT, lock);
+@@ -112,43 +122,43 @@ static inline struct zram *dev_to_zram(struct device *dev)
+ 
+ static unsigned long get_slot_handle(struct zram *zram, unsigned long index)
+ {
+-	return zram->table[index].handle;
++	return slot_entry(zram, index)->handle;
+ }
+ 
+ static void set_slot_handle(struct zram *zram, unsigned long index,
+ 			    unsigned long handle)
+ {
+-	zram->table[index].handle = handle;
++	slot_entry(zram, index)->handle = handle;
+ }
+ 
+ static bool test_slot_flag(struct zram *zram, unsigned long index,
+ 			   enum zram_pageflags flag)
+ {
+-	return zram->table[index].attr.flags & BIT(flag);
++	return slot_entry(zram, index)->attr.flags & BIT(flag);
+ }
+ 
+ static void set_slot_flag(struct zram *zram, unsigned long index,
+ 			  enum zram_pageflags flag)
+ {
+-	zram->table[index].attr.flags |= BIT(flag);
++	slot_entry(zram, index)->attr.flags |= BIT(flag);
+ }
+ 
+ static void clear_slot_flag(struct zram *zram, unsigned long index,
+ 			    enum zram_pageflags flag)
+ {
+-	zram->table[index].attr.flags &= ~BIT(flag);
++	slot_entry(zram, index)->attr.flags &= ~BIT(flag);
+ }
+ 
+ static size_t get_slot_size(struct zram *zram, unsigned long index)
+ {
+-	return zram->table[index].attr.flags & (BIT(ZRAM_FLAG_SHIFT) - 1);
++	return slot_entry(zram, index)->attr.flags & (BIT(ZRAM_FLAG_SHIFT) - 1);
+ }
+ 
+ static void set_slot_size(struct zram *zram, unsigned long index, size_t size)
+ {
+-	unsigned long flags = zram->table[index].attr.flags >> ZRAM_FLAG_SHIFT;
++	unsigned long flags = slot_entry(zram, index)->attr.flags >> ZRAM_FLAG_SHIFT;
+ 
+-	zram->table[index].attr.flags = (flags << ZRAM_FLAG_SHIFT) | size;
++	slot_entry(zram, index)->attr.flags = (flags << ZRAM_FLAG_SHIFT) | size;
+ }
+ 
+ static inline bool slot_allocated(struct zram *zram, unsigned long index)
+@@ -166,14 +176,14 @@ static inline void set_slot_comp_priority(struct zram *zram,
+ 	 * Clear previous priority value first, in case if we recompress
+ 	 * further an already recompressed page
+ 	 */
+-	zram->table[index].attr.flags &= ~(ZRAM_COMP_PRIORITY_MASK <<
++	slot_entry(zram, index)->attr.flags &= ~(ZRAM_COMP_PRIORITY_MASK <<
+ 					   ZRAM_COMP_PRIORITY_BIT1);
+-	zram->table[index].attr.flags |= (prio << ZRAM_COMP_PRIORITY_BIT1);
++	slot_entry(zram, index)->attr.flags |= (prio << ZRAM_COMP_PRIORITY_BIT1);
+ }
+ 
+ static inline u32 get_slot_comp_priority(struct zram *zram, unsigned long index)
+ {
+-	u32 prio = zram->table[index].attr.flags >> ZRAM_COMP_PRIORITY_BIT1;
++	u32 prio = slot_entry(zram, index)->attr.flags >> ZRAM_COMP_PRIORITY_BIT1;
+ 
+ 	return prio & ZRAM_COMP_PRIORITY_MASK;
+ }
+@@ -183,7 +193,7 @@ static void mark_slot_accessed(struct zram *zram, unsigned long index)
+ 	clear_slot_flag(zram, index, ZRAM_IDLE);
+ 	clear_slot_flag(zram, index, ZRAM_PP_SLOT);
+ #ifdef CONFIG_ZRAM_TRACK_ENTRY_ACTIME
+-	zram->table[index].attr.ac_time = (u32)ktime_get_boottime_seconds();
++	slot_entry(zram, index)->attr.ac_time = (u32)ktime_get_boottime_seconds();
+ #endif
+ }
+ 
+@@ -439,7 +449,7 @@ static void mark_idle(struct zram *zram, time64_t cutoff)
+ 
+ #ifdef CONFIG_ZRAM_TRACK_ENTRY_ACTIME
+ 		is_idle = !cutoff ||
+-			cutoff > zram->table[index].attr.ac_time;
++			cutoff > slot_entry(zram, index)->attr.ac_time;
+ #endif
+ 		if (is_idle)
+ 			set_slot_flag(zram, index, ZRAM_IDLE);
+@@ -1577,7 +1587,7 @@ static ssize_t read_block_state(struct file *file, char __user *buf,
+ 
+ 		copied = snprintf(kbuf + written, count,
+ 			"%12lu %12u.%06d %c%c%c%c%c%c\n",
+-			index, zram->table[index].attr.ac_time, 0,
++			index, slot_entry(zram, index)->attr.ac_time, 0,
+ 			test_slot_flag(zram, index, ZRAM_SAME) ? 's' : '.',
+ 			test_slot_flag(zram, index, ZRAM_WB) ? 'w' : '.',
+ 			test_slot_flag(zram, index, ZRAM_HUGE) ? 'h' : '.',
+@@ -1981,12 +1991,49 @@ static ssize_t debug_stat_show(struct device *dev,
+ 	return ret;
+ }
+ 
++static bool slot_table_present(struct zram *zram)
++{
++#ifdef CONFIG_VMALLOC_FLAT
++	return zram->table.tree.root != NULL;
++#else
++	return zram->table != NULL;
++#endif
++}
++
++static void slot_table_free(struct zram *zram)
++{
++#ifdef CONFIG_VMALLOC_FLAT
++	genradix_free(&zram->table);
++#else
++	vfree(zram->table);
++	zram->table = NULL;
++#endif
++}
++
++static bool slot_table_alloc(struct zram *zram, unsigned long nr_slots)
++{
++#ifdef CONFIG_VMALLOC_FLAT
++	/*
++	 * Flat vmalloc needs physically contiguous pages. Allocate the slots
++	 * before exposing the disk, using small allocations instead.
++	 */
++	if (nr_slots <= SIZE_MAX / sizeof(struct zram_table_entry) &&
++	    !genradix_prealloc(&zram->table, nr_slots, GFP_KERNEL))
++		return true;
++	genradix_free(&zram->table);
++	return false;
++#else
++	zram->table = vzalloc(array_size(nr_slots, sizeof(*zram->table)));
++	return zram->table != NULL;
++#endif
++}
++
+ static void zram_meta_free(struct zram *zram, u64 disksize)
+ {
+ 	unsigned long num_pages = disksize >> PAGE_SHIFT;
+ 	unsigned long index;
+ 
+-	if (!zram->table)
++	if (!slot_table_present(zram))
+ 		return;
+ 
+ 	/* Free all pages that are still in this zram device */
+@@ -1994,8 +2041,7 @@ static void zram_meta_free(struct zram *zram, u64 disksize)
+ 		slot_free(zram, index);
+ 
+ 	zs_destroy_pool(zram->mem_pool);
+-	vfree(zram->table);
+-	zram->table = NULL;
++	slot_table_free(zram);
+ 	lockdep_unregister_key(&zram->table_lock_key);
+ }
+ 
+@@ -2004,14 +2050,12 @@ static bool zram_meta_alloc(struct zram *zram, u64 disksize)
+ 	unsigned long num_pages;
+ 
+ 	num_pages = disksize >> PAGE_SHIFT;
+-	zram->table = vzalloc(array_size(num_pages, sizeof(*zram->table)));
+-	if (!zram->table)
++	if (!slot_table_alloc(zram, num_pages))
+ 		return false;
+ 
+ 	zram->mem_pool = zs_create_pool(zram->disk->disk_name);
+ 	if (!zram->mem_pool) {
+-		vfree(zram->table);
+-		zram->table = NULL;
++		slot_table_free(zram);
+ 		return false;
+ 	}
+ 
+@@ -2029,7 +2073,7 @@ static void slot_free(struct zram *zram, unsigned long index)
+ 	unsigned long handle;
+ 
+ #ifdef CONFIG_ZRAM_TRACK_ENTRY_ACTIME
+-	zram->table[index].attr.ac_time = 0;
++	slot_entry(zram, index)->attr.ac_time = 0;
+ #endif
+ 
+ 	clear_slot_flag(zram, index, ZRAM_IDLE);
+diff --git a/drivers/block/zram/zram_drv.h b/drivers/block/zram/zram_drv.h
+index 7a55d7514..ed2a9410a 100644
+--- a/drivers/block/zram/zram_drv.h
++++ b/drivers/block/zram/zram_drv.h
+@@ -16,6 +16,7 @@
+ #define _ZRAM_DRV_H_
+ 
+ #include <asm/byteorder.h>
++#include <linux/generic-radix-tree.h>
+ #include <linux/rwsem.h>
+ #include <linux/zsmalloc.h>
+ 
+@@ -119,7 +120,11 @@ struct zram_stats {
+ #endif
+ 
+ struct zram {
++#ifdef CONFIG_VMALLOC_FLAT
++	GENRADIX(struct zram_table_entry) table;
++#else
+ 	struct zram_table_entry *table;
++#endif
+ 	struct lockdep_map table_lock_map;
+ 	struct lock_class_key table_lock_key;
+ 	struct zs_pool *mem_pool;

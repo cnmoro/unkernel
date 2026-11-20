@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026 unkernel contributors
+
+[Unit]
+Description=Enable compressed swap in RAM
+ConditionPathExists=/sys/block/zram0/disksize
+After=kw-setup.service
+Before=kw-console.service kwtty.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/kw-zram
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

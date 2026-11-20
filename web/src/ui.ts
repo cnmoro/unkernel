@@ -99,6 +99,7 @@ export function createUi(cfg: Config) {
 	cfg.fontSize = fontPref === "auto" ? autoFont() : Number(fontPref);
 	const options: Options = {
 		mem: cfg.memParam || "auto",
+		zram: cfg.zram,
 		net: !cfg.net ? "off" : cfg.wisp ? "custom" : "default",
 		wisp: (cfg.wisp ?? []).join(", "), // the default servers are not shown
 		jit: cfg.jit ? "on" : "off",
@@ -450,6 +451,7 @@ export function createUi(cfg: Config) {
 		const p = new URLSearchParams(cfg.settings);
 		const set = (k: string, v: string | null) => (v === null ? p.delete(k) : p.set(k, v));
 		set("mem", o.mem === "auto" ? null : o.mem);
+		set("zram", o.zram === "auto" ? null : o.zram);
 		const wisp = o.wisp.split(",").map((s) => s.trim()).filter(Boolean).join(",");
 		set("wisp", o.net === "off" ? "0" : o.net === "custom" && wisp ? wisp : null);
 		set("jit", o.jit === "off" ? "0" : null);
