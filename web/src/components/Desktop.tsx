@@ -94,14 +94,9 @@ export function Desktop() {
 	}, []);
 
 	return (
-		<section aria-label="Debian desktop" className="absolute inset-0 z-2 flex flex-col bg-bg">
-			<div className="flex items-center justify-between border-b border-line px-3 py-1">
-				<span className="text-sm text-muted">Xfce desktop</span>
-			</div>
-			<div className="relative min-h-0 flex-1">
-				<div id="desktop-screen" ref={screen} className="absolute inset-0" />
-				{status && <div role="status" className="absolute inset-0 grid place-items-center p-5 text-sm text-muted">{status}</div>}
-			</div>
+		<section aria-label="Debian desktop" className="absolute inset-0 z-2 bg-bg">
+			<div id="desktop-screen" ref={screen} className="absolute inset-0" />
+			{status && <div role="status" className="absolute inset-0 grid place-items-center p-5 text-sm text-muted">{status}</div>}
 		</section>
 	);
 }

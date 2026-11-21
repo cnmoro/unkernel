@@ -735,6 +735,7 @@ export function start(): void {
 	if (!smp && !folder) KW.suspend = async () => {
 		if (!vm || ended() || !running) throw new Error("the system is not running");
 		if (suspending) throw new Error("a suspend is in progress");
+		if (vm.mounts.size) throw new Error("Unmount shared folders before suspending");
 		if (typeof indexedDB === "undefined") throw new Error("this browser has no IndexedDB to keep the session in");
 		const t0 = performance.now();
 		const target = vm;

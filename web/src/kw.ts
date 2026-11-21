@@ -101,6 +101,7 @@ export interface KWGlobal {
 	showcase?: { skip(): void; pause(): void; resume(): void };
 	/** The kernel once user space runs (rejects if it never does), once the boot module runs. */
 	ready?: () => Promise<KernelHandle>;
+	vm?: KernelHandle;
 	/** The terminal windows, once the boot module runs. */
 	windows?: WindowsApi;
 	/** The guest preview panel (preview.ts): open(port) (false: not a port), close(), and the /vm/ URL of a guest port. */

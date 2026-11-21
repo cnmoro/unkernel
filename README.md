@@ -157,6 +157,13 @@ checkpoint would reclaim at least 64 MiB. **Compact now** is available
 after poweroff. Compaction temporarily needs room for the checkpoint.
 Older builds must be updated before opening a compacted or grown folder.
 
+For direct access to host files, open **Guest → Shared folders → Share
+folder…** while the VM is running. The folder appears under
+`/mnt/shared-<name>` for that session. Shares are read-only by default.
+**Allow guest changes** enables writes and deletions in the selected local
+folder. Atomic rename, Unix ownership and permission changes, and links
+are unavailable for these local browser mounts.
+
 Choose **Start in Desktop** at boot to start Xfce automatically. The
 **Terminal / Desktop** button switches between the shell and the same
 desktop session. The guest resolution follows the desktop view when

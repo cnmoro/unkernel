@@ -12,6 +12,7 @@ import { APPLE, CHORD, COMMANDS, DIALOG_KEYS, PREFIX, codeLabel } from "../short
 import { useStore, type Check, type Tab } from "../store.ts";
 import { fmtT } from "../ui.ts";
 import { FontSize, Options } from "./Options.tsx";
+import { SharedFolders } from "./SharedFolders.tsx";
 
 const TABS: Array<[Tab, string, string]> = [["status", "s", "System"], ["guest", "g", "Guest"], ["env", "i", "Environment"], ["log", "l", "Kernel log"], ["errors", "e", "Errors"], ["keys", "?", "Keys"]];
 const TITLE: Record<Tab, string> = { status: "system", guest: "guest", env: "environment", log: "kernel log", errors: "errors", keys: "keys" };
@@ -72,6 +73,8 @@ export function Panel() {
 						<FontSize />
 						<H3>Data disk</H3>
 						<DataDisk />
+						<H3>Shared folders</H3>
+						<SharedFolders />
 						<H3>Preview</H3>
 						<PreviewOpen />
 					</section>

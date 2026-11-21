@@ -3,12 +3,12 @@
 import { useState } from "react";
 import { createRoot } from "react-dom/client";
 import { KW } from "../kw.ts";
+import { directoryPicker } from "../shared-folder.ts";
 import { DEFAULT_FOLDER_DISK_GIB, MAX_FOLDER_DISK_GIB, folderDiskSize } from "../sdk.ts";
 
-type FolderPicker = (options: { mode: "readwrite"; id: string }) => Promise<FileSystemDirectoryHandle>;
 const GiB = 1024 ** 3;
 
-function BootChoices({ pick, askView, done }: { pick?: FolderPicker; askView: boolean; done: () => void }) {
+function BootChoices({ pick, askView, done }: { pick?: ReturnType<typeof directoryPicker>; askView: boolean; done: () => void }) {
 	const [desktop, setDesktop] = useState(!!KW.startDesktop);
 	const [folder, setFolder] = useState<FileSystemDirectoryHandle>();
 	const [current, setCurrent] = useState<number>();
@@ -78,7 +78,7 @@ function BootChoices({ pick, askView, done }: { pick?: FolderPicker; askView: bo
 export async function chooseBootStorage(): Promise<void> {
 	const query = new URLSearchParams(location.search);
 	const pick = KW.config.data && query.get("storage") !== "browser"
-		? (window as Window & { showDirectoryPicker?: FolderPicker }).showDirectoryPicker?.bind(window)
+		? directoryPicker()
 		: undefined;
 	const view = query.get("view");
 	KW.startDesktop = KW.config.guest === "debian" && view === "desktop";

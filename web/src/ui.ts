@@ -258,6 +258,7 @@ export function createUi(cfg: Config) {
 		async confirmSuspend() {
 			if (cfg.cpus > 1) { ui.toast("Suspend needs one CPU: the SMP kernel cannot be saved (Options, CPUs)"); return; }
 			if (!KW.suspend || $.get().state !== "running") { ui.toast("Suspend works once the system runs"); return; }
+			if (KW.vm?.mounts.size) { ui.toast("Unmount shared folders before suspending"); return; }
 			if (!await ui.ask({ title: "suspend", msg: "Save the running system in this browser and stop it? The next load offers to resume it. Terminal windows 1-9 and network connections do not survive.", ok: "Suspend" })) return;
 			ui.closePanel();
 			ui.toast("Suspending…");
