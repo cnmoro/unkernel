@@ -14,6 +14,7 @@ import { useStore } from "../store.ts";
 import { PREFIX } from "../shortcuts.ts";
 
 const B = __KW_BUILD__;
+const UPSTREAM = "https://github.com/pithings/unkernel";
 
 const Triangle = ({ size = 11 }: { size?: number }) => (
 	<svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5 23 21.5H1Z" fill="currentColor" /></svg>
@@ -61,18 +62,20 @@ export function About({ hint, className = "" }: { hint?: ReactNode; className?: 
 				className="m-auto w-[min(440px,calc(100%-24px))] overflow-visible border border-line-strong bg-bg p-0 font-mono text-[12.5px] leading-relaxed text-fg shadow-[0_16px_48px_rgba(0,0,0,.8)] select-text backdrop:bg-black/65">
 				<div className="px-4 pt-5 pb-4">
 					<h2 id="about-title" className="absolute -top-2 left-3 bg-bg px-1.5 text-[12px] leading-4 font-normal"><span className="text-faint">┤</span> about <span className="text-faint">├</span></h2>
-					<p className="text-muted"><b className="font-semibold text-fg">unkernel</b>: Linux compiled to WebAssembly,<br />running unmodified aarch64 user space in your browser tab.</p>
+					<p className="text-muted"><b className="font-semibold text-fg">unkernel fork</b><br />Linux compiled to WebAssembly, running unmodified aarch64 user space in your browser tab.</p>
 					<dl className="mt-4 grid grid-cols-[8ch_1fr] gap-x-4 gap-y-1 tabular-nums">
-						<Row k="source"><A href={REPO}>github.com/pithings/unkernel</A></Row>
+						<Row k="fork"><A href={REPO}>{REPO.replace("https://", "")}</A></Row>
+						<Row k="upstream"><A href={UPSTREAM}>github.com/pithings/unkernel</A></Row>
 						<Row k="kernel">Linux {B.linux || "?"}{B.kernel && <span className="text-faint">, {B.kernel === "local" ? "local build" : <A href={`${REPO}/releases/tag/${B.kernel}`}>{B.kernel}</A>}</span>}</Row>
 						<Row k="distro">{distro ? <>{distro.image || distro.name}<span className="text-faint">, {distro.url}</span></> : "none (base shell)"}</Row>
 						<Row k="commit">{commit ? <A href={`${REPO}/commit/${B.commit}`}>{commit}</A> : "dev"}{B.date && <span className="text-faint">, {day(B.date)}</span>}</Row>
 					</dl>
 					<footer className="mt-4 border-t border-line pt-3">
 						<p className="text-[12px] text-muted">
-							Made with <span className="text-fg" aria-label="love">♥</span> by <A href="https://x.com/_pi0_">Pooya Parsa</A> (<A href="https://github.com/pi0">pi0</A>){" "}
+							Fork maintained by <A href="https://github.com/cnmoro">cnmoro</A><br />
+							Original author <A href="https://x.com/_pi0_">Pooya Parsa</A> (<A href="https://github.com/pi0">pi0</A>){" "}
 							<span className="text-faint">· <A href={`${REPO}#-credits`}>full credits</A></span><br />
-							sponsored by <A href="https://vercel.com/open-source-program"><span className="inline-flex items-center gap-1"><Triangle size={10} />Vercel</span></A>
+							Upstream sponsored by <A href="https://vercel.com/open-source-program"><span className="inline-flex items-center gap-1"><Triangle size={10} />Vercel</span></A>
 						</p>
 						<div className="mt-5 flex justify-end">
 							<button id="about-close" type="button" className="btn btn-sm" onClick={close}>Close</button>
