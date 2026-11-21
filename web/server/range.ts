@@ -5,8 +5,9 @@
 // server's handler (server/distros.ts). The SDK (js/core/block.ts HttpBase,
 // strict) opens an image with one revalidating Range request for its first
 // 256 KiB (`cache: "no-cache"`), then reads the prefetch its distro header
-// asks for (a whole small image: one plain GET; else one Range request) and
-// lazy 256 KiB-aligned ranges, all with `cache: "force-cache"`: from the
+// asks for (a whole small image: one plain GET; else one Range request), its
+// background tier once the boot is quiet (4 MiB Range requests, one at a
+// time), read-ahead and lazy 256 KiB-aligned ranges, all with `cache: "force-cache"`: from the
 // browser's HTTP cache without asking again, each response's ETag compared
 // with the opening one's (a mismatch is fetched again with `cache:
 // "reload"`). So: the file as it is (erofs compresses inside; never

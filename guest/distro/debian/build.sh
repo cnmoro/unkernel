@@ -50,8 +50,9 @@
 # erofs image's 25.0 MiB, 1.3 of 18.8 MiB for the ext4 image with zstd -19
 # without the package lists and the cache (2026-11-19); with them the erofs
 # image is 56.9 MiB (lists 15.6, cache 16.3), the ext4 one 45.5 MiB with
-# zstd -19. Booting to the prompt reads neither (3 MiB of the erofs image
-# over HTTP, laid out in front by guest/lib/image.sh). iconv to other charsets works as on Debian.
+# zstd -19. Booting to the prompt reads neither (4 MiB of the erofs image
+# over HTTP, laid out in front by guest/lib/image.sh); the cache is part of
+# the warm set fetched after the boot (below). iconv to other charsets works as on Debian.
 # DEBIAN_TARBALL=file overrides the pinned image (pins.sh);
 # KW_DEBIAN_APT_CACHE=0 leaves the cache out (no boot at build time).
 set -euo pipefail
@@ -360,6 +361,15 @@ awk 'NR == FNR { have[$0]; next } !($1 in have)' \
 	"$stage/usr/lib/kw-commands" > "$stage/usr/lib/kw-commands.new"
 mv "$stage/usr/lib/kw-commands.new" "$stage/usr/lib/kw-commands"
 
+# The warm set (guest/lib/image.sh): what apt reads offline, fetched in the
+# background after the boot: apt's programs and libraries, dpkg's state and
+# srcpkgcache.bin (16 MiB of the image), not the package lists (another
+# 15.6 MiB, of which apt-cache show reads only up to a package's record).
+# Plus apt's http method and dpkg's unpackers, which an install runs and no
+# offline trace reaches.
+KW_WARM_SCRIPT='apt-cache show bash >/dev/null; apt-cache policy >/dev/null; apt show bash >/dev/null 2>&1; apt-get -s install git >/dev/null; dpkg -l >/dev/null'
+KW_WARM_EXCLUDE='var/lib/apt/lists/*'
+KW_WARM_FILES='usr/lib/apt/methods/http usr/bin/dpkg-deb usr/bin/dpkg-split'
 distro_images debian "$stage" "$DEBIAN_TARBALL" "debian-$DEBIAN_VERSION" "${mktree_opts[@]}" "${user_owner[@]}"
 # apt in each final image takes the cache as it is: a new one would have
 # been written to the upper layer, with a new mtime.

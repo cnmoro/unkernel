@@ -67,23 +67,28 @@ base id (`/kw/layer/usr/lib/kw-base`), `image` the image id from `NAME.id`.
 - Builds are reproducible: an identical rebuild gives byte-identical
   cpio archives and images, with the same ids.
 - An erofs image starts with the distro header (`lib/image.sh`
-  `distro_hint`), 128 bytes at offset 0, before the superblock at 1024:
-  `KWDISTRO`, version 1, header length 128, then u64 image size and u64
+  `distro_hint`), 128 or 136 bytes at offset 0, before the superblock at
+  1024: `KWDISTRO`, version 1, header length, then u64 image size and u64
   `prefetch` (bytes from the start a boot reads; the image size: fetch it
   whole; 0: no hint), the distro name (32 bytes) and the image id (64),
-  NUL-padded, little-endian (js/core/distro.ts). The SDK fetches
-  `[0, prefetch)` ahead when it reads the image over HTTP. The image is
+  NUL-padded, little-endian, and in a 136-byte header u64 `background`
+  (the end of the warm set; js/core/distro.ts). The SDK fetches
+  `[0, prefetch)` ahead when it reads the image over HTTP, and
+  `[prefetch, background)` once the boot is done. The image is
   laid out so that a boot's reads are one piece at its front: all inodes
   and directories, then the data of the files a boot to the prompt and a
   first exec reads (found by booting an uncompressed image of the same
   tree, `tools/vm-run.ts --trace`, the same set in every boot so far),
-  without fragments, then the rest (`lib/image.sh`, the patched
-  mkfs.erofs's `--sort=tar --nofrag-first --MZ-front`). An image of at
-  most `KW_PREFETCH_WHOLE_MAX` bytes (16 MiB) is fetched whole; for a
-  larger one `prefetch` is what a boot of the final image reads of that
-  piece, rounded up to 1 MiB. Both need the base bundle and node, like
-  Debian's apt cache; without them the image is not ordered, and a
-  larger one gets `prefetch` 0.
+  then those of the distro's warm set (what the first commands after the
+  prompt read, `KW_WARM_SCRIPT` in its build.sh: Debian's apt; the list
+  `distro/NAME/warm-files`), both without fragments, then the rest
+  (`lib/image.sh`, the patched mkfs.erofs's `--sort=tar --nofrag-first
+  --MZ-front`). An image of at most `KW_PREFETCH_WHOLE_MAX` bytes (16 MiB)
+  is fetched whole; for a larger one `prefetch` is what a boot of the
+  final image reads of that piece, rounded up to 1 MiB, and `background`
+  the end of the warm set's data, rounded up to 1 MiB. Both need the base
+  bundle and node, like Debian's apt cache; without them the image is not
+  ordered, and a larger one gets `prefetch` 0.
 
 ## Environment
 
@@ -95,7 +100,8 @@ copied to `web/kernel/`), `KW_DISTRO_OUT` (images and staging trees),
 `NAME_TARBALL=file` (another upstream tarball), `KW_DEBIAN_APT_CACHE=0`,
 `KW_DISTRO_HINT=0` (no distro header, no boot layout), `KW_DISTRO_TRACE=1`
 (boot the image here and record `distro/NAME/boot-files` again: what a
-boot reads, laid out first in the erofs image), `KW_PREFETCH_WHOLE_MAX`. A build beside the
+boot reads, laid out first in the erofs image; and `warm-files`, where the
+distro has a warm set), `KW_PREFETCH_WHOLE_MAX`. A build beside the
 main outputs:
 
 ```sh

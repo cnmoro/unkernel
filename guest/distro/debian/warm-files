@@ -1,0 +1,48 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026 Pooya Parsa <pooya@pi0.io>
+# What the first commands after the prompt read in the debian image (the
+# warm set: KW_WARM_SCRIPT in its build.sh), past the boot set: these
+# files follow boot-files in debian.erofs, and the SDK fetches them in the
+# background once the boot is done (guest/lib/image.sh). Recorded by
+# KW_DISTRO_TRACE=1 guest/build.sh distro debian; do not edit by hand.
+etc/apt/apt.conf.d/01autoremove
+etc/apt/apt.conf.d/70debconf
+etc/apt/apt.conf.d/90kw
+etc/apt/apt.conf.d/docker-autoremove-suggests
+etc/apt/apt.conf.d/docker-clean
+etc/apt/apt.conf.d/docker-gzip-indexes
+etc/apt/apt.conf.d/docker-no-languages
+etc/apt/sources.list.d/debian.sources
+etc/dpkg/dpkg.cfg
+etc/dpkg/dpkg.cfg.d/docker
+etc/dpkg/dpkg.cfg.d/docker-apt-speedup
+usr/bin/apt
+usr/bin/apt-cache
+usr/bin/apt-get
+usr/bin/dpkg
+usr/bin/dpkg-query
+usr/bin/ischroot
+usr/lib/aarch64-linux-gnu/libapt-private.so.0.0.0
+usr/lib/aarch64-linux-gnu/libbz2.so.1.0.4
+usr/lib/aarch64-linux-gnu/libgcc_s.so.1
+usr/lib/aarch64-linux-gnu/liblz4.so.1.10.0
+usr/lib/aarch64-linux-gnu/liblzma.so.5.8.1
+usr/lib/aarch64-linux-gnu/libm.so.6
+usr/lib/aarch64-linux-gnu/libmd.so.0.1.0
+usr/lib/aarch64-linux-gnu/libseccomp.so.2.6.0
+usr/lib/aarch64-linux-gnu/libudev.so.1.7.10
+usr/lib/aarch64-linux-gnu/libxxhash.so.0.8.3
+usr/lib/aarch64-linux-gnu/libz.so.1.3.1
+usr/lib/aarch64-linux-gnu/libzstd.so.1.5.7
+usr/lib/apt/methods/http
+usr/share/dpkg/cputable
+usr/share/dpkg/tupletable
+var/lib/apt/extended_states
+var/lib/dpkg/status
+var/lib/dpkg/triggers/File
+usr/lib/aarch64-linux-gnu/libapt-pkg.so.7.0.0
+usr/lib/aarch64-linux-gnu/libcrypto.so.3
+usr/lib/aarch64-linux-gnu/libssl.so.3
+usr/lib/aarch64-linux-gnu/libstdc++.so.6.0.33
+usr/lib/aarch64-linux-gnu/libsystemd.so.0.40.0
+var/cache/apt/srcpkgcache.bin

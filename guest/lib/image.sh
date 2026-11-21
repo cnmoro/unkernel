@@ -47,12 +47,23 @@
 # costs a few lazy reads, nothing else. Without a list the image is laid
 # out as mkfs.erofs does it (data breadth-first by name, metadata in
 # between), with a warning.
+# A distro may name a warm set too: what the first commands a user types
+# after the prompt read ($KW_WARM_SCRIPT, set by its build.sh; Debian:
+# apt's binaries, libraries and srcpkgcache.bin), recorded in
+# guest/distro/NAME/warm-files by the same KW_DISTRO_TRACE=1 run (a second
+# traced boot that runs the script; the boot set's files and paths matching
+# $KW_WARM_EXCLUDE, a list of globs, left out; small files first, then
+# those over 1 MiB), plus $KW_WARM_FILES (files no offline trace reaches).
+# Its data follows the boot set's, also without tails in the packed inode,
+# and the header's `background` (the end of its data, rounded up to 1 MiB)
+# lets the SDK fetch it once the boot is done. No list: no warm set.
 # It starts with the distro header (its format: js/core/distro.ts), in the
 # 1024 bytes before the superblock that erofs leaves unused, so the SDK
 # knows how much of it to fetch ahead over HTTP: an image of at most
 # $KW_PREFETCH_WHOLE_MAX bytes (default 16 MiB) is fetched whole; for a
 # larger one prefetch is the end of the boot set's data plus 256 KiB,
-# rounded up to 1 MiB. With KW_DISTRO_TRACE=1 it boots once more here
+# rounded up to 1 MiB; background (the warm set) is 0 for an image fetched
+# whole. With KW_DISTRO_TRACE=1 it boots once more here
 # (guest/tools/vm-run.ts --trace), prefetch also covers what that boot
 # reads up to there, and the build prints what the boot reads inside and
 # beyond it. Not ordered, the header says 0 (no hint);
@@ -67,6 +78,10 @@ KW_PREFETCH_WHOLE_MAX="${KW_PREFETCH_WHOLE_MAX:-16777216}"
 # runs at the prompt: the first things a user types.
 KW_BOOT_FILES="${KW_BOOT_FILES:-etc/resolv.conf usr/share/terminfo/l/linux}"
 KW_BOOT_SCRIPT='ls -l / >/dev/null; cat /etc/os-release >/dev/null'
+# The warm set (above): the distro's build.sh sets these; none by default.
+KW_WARM_SCRIPT="${KW_WARM_SCRIPT:-}"
+KW_WARM_EXCLUDE="${KW_WARM_EXCLUDE:-}"
+KW_WARM_FILES="${KW_WARM_FILES:-}"
 
 distro_out="$(realpath -m "${KW_DISTRO_OUT:-$build/distro}")"
 
@@ -86,7 +101,7 @@ distro_images() {
 	local tar="$distro_out/$name.tar" id uuid epoch fmt bin mzblocks=0
 	mkdir -p "$distro_out"
 	# Images of this distro only: an old one must not outlive a failed build.
-	rm -f "$distro_out/$name".{erofs,ext4,tar,debugfs,id,boot}
+	rm -f "$distro_out/$name".{erofs,ext4,tar,debugfs,id,boot,warm}
 	id=$(python3 "$guest/tools/mktree.py" "$stage" "$upstream" "$tar" --id "$prefix" \
 		--debugfs "$distro_out/$name.debugfs" "$@")
 	echo "image id: $id"
@@ -110,7 +125,7 @@ distro_images() {
 			rm -rf "$distro_out/$name.erofs.x"
 			if [ "${KW_DISTRO_HINT:-1}" != 0 ]; then
 				distro_hint "$distro_out/$name.erofs.tmp" "$(cat "$stage/usr/lib/kw-distro" 2>/dev/null || echo "$name")" "$id" "$bin" \
-					"$distro_out/$name.boot" "$mzblocks"
+					"$distro_out/$name.boot" "$mzblocks" "$distro_out/$name.warm"
 				"$bin/fsck.erofs" "$distro_out/$name.erofs.tmp" >/dev/null ||
 					{ echo "distro: $name.erofs is broken by its header" >&2; exit 1; }
 			fi
@@ -120,7 +135,7 @@ distro_images() {
 		*) echo "distro: unknown format $fmt (KW_DISTRO_FORMATS: erofs ext4)" >&2; exit 2 ;;
 		esac
 	done
-	rm -f "$distro_out/$name".{debugfs,boot}
+	rm -f "$distro_out/$name".{debugfs,boot,warm}
 	# The id for distros.json (guest/tools/distros-json.mjs), written last:
 	# it says the images are complete.
 	echo "$id" > "$distro_out/$name.id"
@@ -135,7 +150,10 @@ distro_images() {
 # KW_DISTRO_TRACE=1 a new record of it: an uncompressed image of TAR
 # without inline data boots (vm-run.ts --trace: to the console's prompt,
 # then $KW_BOOT_SCRIPT) and erofs-trace.py maps its reads to the files it read.
-# mktree.py --first moves them to the front of TAR, and the patched mkfs.erofs
+# Then the warm set ($distro_out/NAME.warm): $KW_DISTRO_DIR/warm-files, or
+# with KW_DISTRO_TRACE=1 a second traced boot that also runs
+# $KW_WARM_SCRIPT (warm_select), plus $KW_WARM_FILES.
+# mktree.py --first moves both to the front of TAR, and the patched mkfs.erofs
 # (tools/erofs-utils-patches) lays out data in tar order (--sort=tar), keeps
 # those files out of the packed inode of -Efragments (--nofrag-first) and
 # puts all inodes and directories in front of the data (--MZ --MZ-front;
@@ -143,6 +161,7 @@ distro_images() {
 distro_erofs() {
 	local name=$1 tar=$2 uuid=$3 epoch=$4 bin=$5 out="$distro_out/$1.erofs.tmp" n log
 	local rec="${KW_DISTRO_DIR:-$guest/distro/$1}/boot-files" boot="$distro_out/$1.boot"
+	local wrec="${KW_DISTRO_DIR:-$guest/distro/$1}/warm-files" warm="$distro_out/$1.warm"
 	local z=() order=()
 	[ "$KW_EROFS_COMPRESS" = none ] || z=("-z$KW_EROFS_COMPRESS" $KW_EROFS_OPTS)
 	# --tar=f: owners, modes, hard links and mtimes come from the
@@ -150,7 +169,7 @@ distro_erofs() {
 	# keep theirs (which costs 32 bytes per inode: 0.2%).
 	local mkfs=("$bin/mkfs.erofs" --quiet --tar=f -L kwroot -U "$uuid" -T "$epoch" --mkfs-time --preserve-mtime)
 	mzblocks=0
-	rm -f "$boot"
+	rm -f "$boot" "$warm"
 	if [ "${KW_DISTRO_HINT:-1}" = 0 ]; then
 		:
 	elif [ "${KW_DISTRO_TRACE:-0}" = 1 ]; then
@@ -161,11 +180,22 @@ distro_erofs() {
 		node "$guest/tools/vm-run.ts" "$base_bundle" "$out" --net --timeout 300 --trace "$out.trace" "$KW_BOOT_SCRIPT" ||
 			{ echo "distro: $name.erofs (uncompressed) does not boot (vm-run.ts)" >&2; exit 1; }
 		python3 -I "$guest/tools/erofs-trace.py" "$out" "$out.trace" > "$boot"
-		rm -f "$out" "$out.trace"
 		{ boot_files_header "$name"; cat "$boot"; } > "$rec"
 		echo "distro: $name: recorded $rec" >&2
+		if [ -n "$KW_WARM_SCRIPT" ]; then
+			node "$guest/tools/vm-run.ts" "$base_bundle" "$out" --net --timeout 600 --trace "$out.trace" \
+				"$KW_BOOT_SCRIPT; $KW_WARM_SCRIPT" >/dev/null ||
+				{ echo "distro: the warm script fails in $name.erofs (uncompressed) (vm-run.ts)" >&2; exit 1; }
+			python3 -I "$guest/tools/erofs-trace.py" "$out" "$out.trace" > "$out.files"
+			warm_select "$out.files" "$boot" "$tar" > "$warm"
+			rm -f "$out.files"
+			{ warm_files_header "$name"; cat "$warm"; } > "$wrec"
+			echo "distro: $name: recorded $wrec" >&2
+		fi
+		rm -f "$out" "$out.trace"
 	elif [ -f "$rec" ]; then
 		grep -v -e '^#' -e '^$' "$rec" > "$boot" || true
+		if [ -f "$wrec" ]; then grep -v -e '^#' -e '^$' "$wrec" > "$warm" || true; fi
 	else
 		echo "distro: WARNING: no $rec (record it: KW_DISTRO_TRACE=1 guest/build.sh distro $name):" \
 			"$name.erofs is not laid out for its boot, and over $KW_PREFETCH_WHOLE_MAX bytes it gets no prefetch hint (read lazily, a range per miss)" >&2
@@ -176,11 +206,19 @@ distro_erofs() {
 	# miss: always in the boot set, where the image has them.
 	if [ -s "$boot" ]; then
 		for n in $KW_BOOT_FILES; do grep -qxF "$n" "$boot" || echo "$n" >> "$boot"; done
+		# The warm set without what the boot set has (a recorded list may
+		# be older than boot-files), plus its extra files.
+		if [ -s "$warm" ] || [ -n "$KW_WARM_FILES" ]; then
+			{ cat "$warm" 2>/dev/null; printf '%s\n' $KW_WARM_FILES; } | awk 'NR == FNR { b[$0]; next } $0 != "" && !($0 in b) && !s[$0]++' "$boot" - > "$warm.tmp"
+			mv "$warm.tmp" "$warm"
+		fi
 	fi
 	if [ -s "$boot" ]; then
-		n=$(python3 -I "$guest/tools/mktree.py" --first "$boot" "$tar" "$tar.tmp")
+		cat "$boot" "$warm" 2>/dev/null > "$out.first"
+		n=$(python3 -I "$guest/tools/mktree.py" --first "$out.first" "$tar" "$tar.tmp")
+		rm -f "$out.first"
 		mv "$tar.tmp" "$tar"
-		echo "distro: $name.erofs: the boot set is $n files, first in the image" >&2
+		echo "distro: $name.erofs: the boot set and the warm set are $n files ($(wc -l < "$boot") + $(cat "$warm" 2>/dev/null | wc -l) listed), first in the image" >&2
 		order=(--sort=tar --nofrag-first="$n" --MZ)
 		log="$out.log"
 		rm -f "$out"
@@ -207,25 +245,60 @@ boot_files_header() {
 		"# KW_DISTRO_TRACE=1 guest/build.sh distro $1; do not edit by hand."
 }
 
-# distro_hint IMAGE DISTRO ID EROFS-BIN [BOOT-LIST MZ-BLOCKS]: write the
+# warm_files_header NAME: the head of a recorded guest/distro/NAME/warm-files.
+warm_files_header() {
+	sed -n '1,2p' "$guest/lib/image.sh"
+	printf '%s\n' "# What the first commands after the prompt read in the $1 image (the" \
+		"# warm set: KW_WARM_SCRIPT in its build.sh), past the boot set: these" \
+		"# files follow boot-files in $1.erofs, and the SDK fetches them in the" \
+		"# background once the boot is done (guest/lib/image.sh). Recorded by" \
+		"# KW_DISTRO_TRACE=1 guest/build.sh distro $1; do not edit by hand."
+}
+
+# warm_select PATHS BOOT-LIST TAR: of the paths in PATHS (erofs-trace.py of
+# the boot plus the warm script), those not in BOOT-LIST nor matching a glob of
+# $KW_WARM_EXCLUDE; the ones of at most 1 MiB first, then the larger ones
+# (sizes from TAR), each in path order.
+warm_select() {
+	python3 -I - "$1" "$2" "$3" "$KW_WARM_EXCLUDE" <<'EOF'
+import fnmatch, sys, tarfile
+files, boot, tar, exclude = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4].split()
+skip = {l.strip() for l in open(boot)}
+size = {m.name.removeprefix("./"): m.size for m in tarfile.open(tar) if m.isreg()}
+paths = [p for p in (l.rstrip("\n") for l in open(files))
+         if p and p not in skip and not any(fnmatch.fnmatchcase(p, g) for g in exclude)]
+for p in sorted(paths, key=lambda p: size.get(p, 0) > 1 << 20):   # stable: path order within each
+    print(p)
+EOF
+}
+
+# set_end LIST IMAGE EROFS-BIN MZ-BLOCKS: the end of the data of LIST's
+# files in IMAGE: that of the last file in it with data after the metadata
+# zone (one with inline data only ends in it); 0 if none has.
+set_end() {
+	local p e=0
+	while read -r p; do
+		e=$("$3/dump.erofs" --path="/$p" -e "$2" 2>/dev/null |
+			awk -F'[|:]' -v mz=$((($4 + 1) * 4096)) '/^ *[0-9]+:/ { sub(/.*\.\./, "", $4); if ($4 + 0 > mz && $4 + 0 > e) e = $4 + 0 } END { print e + 0 }')
+		[ "$e" = 0 ] || break
+	done < <(tac "$1")
+	echo "$e"
+}
+
+# distro_hint IMAGE DISTRO ID EROFS-BIN [BOOT-LIST MZ-BLOCKS WARM-LIST]: write the
 # distro header (see the top) into IMAGE's first 1024 bytes, which must be
-# zeros. BOOT-LIST and MZ-BLOCKS: from distro_erofs (no list: no hint for a
-# large image).
+# zeros. BOOT-LIST, MZ-BLOCKS and WARM-LIST: from distro_erofs (no boot
+# list: no hint for a large image; no warm list: no background, and the
+# 128-byte header).
 distro_hint() {
-	local img=$1 distro=$2 id=$3 bin=$4 list=${5:-} mz=${6:-0} size prefetch=0 trace cut=0 p report
+	local img=$1 distro=$2 id=$3 bin=$4 list=${5:-} mz=${6:-0} wlist=${7:-} size prefetch=0 background=0 trace cut=0 report
 	size=$(stat -c %s "$img")
 	if [ "$size" -le "$KW_PREFETCH_WHOLE_MAX" ]; then
 		prefetch=$size
 	elif [ -s "$list" ]; then
-		# The end of the boot set's data: that of the last file in it with
-		# data after the metadata zone (one with inline data only ends
-		# in it); the boot's reads after that (probes of the device's
-		# last block) are not the boot set's.
-		while read -r p; do
-			cut=$("$bin/dump.erofs" --path="/$p" -e "$img" |
-				awk -F'[|:]' -v mz=$(((mz + 1) * 4096)) '/^ *[0-9]+:/ { sub(/.*\.\./, "", $4); if ($4 + 0 > mz && $4 + 0 > e) e = $4 + 0 } END { print e + 0 }')
-			[ "$cut" = 0 ] || break
-		done < <(tac "$list")
+		# The end of the boot set's data; the boot's reads after that
+		# (probes of the device's last block) are not the boot set's.
+		cut=$(set_end "$list" "$img" "$bin" "$mz")
 		[ "$cut" != 0 ] || cut=$size
 		trace="$img.trace"
 		if [ "${KW_DISTRO_TRACE:-0}" = 1 ]; then
@@ -241,18 +314,29 @@ distro_hint() {
 				printf "%d %d reads (%.1f MiB) inside it, %d (%.1f KiB) beyond\n", p, n, b / 1048576, m, c / 1024 }' "$trace")
 		rm -f "$trace"
 		if [ "${KW_DISTRO_TRACE:-0}" = 1 ]; then report="; its boot makes $report"; else report=; fi
+		# The warm set's data follows the boot set's: its end, rounded up to 1 MiB.
+		if [ -s "$wlist" ]; then
+			background=$(set_end "$wlist" "$img" "$bin" "$mz")
+			background=$(( (background + 1048575) / 1048576 * 1048576 ))
+			[ "$background" -le "$size" ] || background=$size
+			[ "$background" -gt "$prefetch" ] || background=0
+			[ "$background" = 0 ] || report="$report; background to $((background / 1048576)) MiB (the warm set)"
+		fi
 		echo "distro: $distro.erofs: prefetch $((prefetch / 1048576)) MiB of $((size / 1048576)) MiB$report" >&2
 	fi
-	python3 -I - "$img" "$size" "$prefetch" "$distro" "$id" <<'EOF'
+	python3 -I - "$img" "$size" "$prefetch" "$distro" "$id" "$background" <<'EOF'
 import struct, sys
-img, size, prefetch, distro, image = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), sys.argv[4], sys.argv[5]
+img, size, prefetch, distro, image, background = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), sys.argv[4], sys.argv[5], int(sys.argv[6])
 if len(distro.encode()) > 31 or len(image.encode()) > 63:
     sys.exit(f"distro: {distro!r} or {image!r} is too long for the distro header")
+head = struct.pack("<8sIIQQ32s64s", b"KWDISTRO", 1, 136 if background else 128, size, prefetch, distro.encode(), image.encode())
+if background:
+    head += struct.pack("<Q", background)
 with open(img, "r+b") as f:
     if f.read(1024).strip(b"\0"):
         sys.exit(f"distro: {img}: the first 1024 bytes are not free for the distro header")
     f.seek(0)
-    f.write(struct.pack("<8sIIQQ32s64s", b"KWDISTRO", 1, 128, size, prefetch, distro.encode(), image.encode()))
+    f.write(head)
 EOF
 }
 

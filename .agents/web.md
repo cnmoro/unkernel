@@ -187,8 +187,11 @@ deploying the page needs no kernel toolchain.
     opens an image with one Range request for its first 256 KiB with
     `cache: "no-cache"` (the one request that revalidates), then reads the
     prefetch the image's distro header names (Alpine: the whole image, one
-    plain GET; Debian: one streamed Range request of its first 13 MiB) and
-    lazy ranges, all `cache: "force-cache"`, comparing each response's
+    plain GET; Debian: one streamed Range request of its first 4 MiB), the
+    background tier it names once the boot is quiet (Debian: the warm set,
+    apt's files, from 4 to 27 MiB, in 4 MiB Range requests one at a time),
+    and lazy and read-ahead ranges (256 KiB-aligned; read-ahead up to 4 MiB),
+    all `cache: "force-cache"`, comparing each response's
     ETag with the opening one's and fetching a mismatch again with
     `cache: "reload"`. So every response for an image, 200 and 206 alike,
     must carry the same strong ETag, be cacheable (never `no-store`) and
@@ -784,7 +787,7 @@ Doom build come from the data disk on later tours. `KW.showcase` has
   `vercel deploy --prebuilt`. Vercel's build sets `VERCEL`, so it takes
   the newest release: deploy only after a release with this layout
   (unkernel.wasm, distros.json, the images) exists. The images are about
-  61 MB of static files (alpine 4.1, debian 56.9 MiB).
+  77 MB of static files (alpine 4.0, debian 72.6 MB).
 - A LAN `http://` page is not a secure context: no clipboard API, no
   `deviceMemory`, no Web Locks, and no cross-origin isolation. It still
   works.

@@ -18,18 +18,23 @@
 // The distro header: guest/lib/image.sh writes one into the first 1024
 // bytes of an erofs image, which erofs (and ext4) leave unused (the
 // superblock is at 1024, and its checksum starts there), so the image
-// tells how to fetch it with no manifest. 128 bytes, little-endian:
+// tells how to fetch it with no manifest. 128 or 136 bytes, little-endian:
 //    0  "KWDISTRO"     magic
 //    8  u32 1          version (another one: no header)
-//   12  u32 128        header length
+//   12  u32 128|136    header length (at least 128; readers skip what they
+//                      do not know)
 //   16  u64 size       the image's size (served at another size: no header)
 //   24  u64 prefetch   bytes from the start that a boot reads: the image
 //                      size means "fetch it whole", 0 "no hint"
 //   32  char[32]       the distro's name (/usr/lib/kw-distro), NUL-padded
 //   64  char[64]       the image id (/usr/lib/kw-image), NUL-padded
+//  128  u64 background (length 136) the end of the warm set: what the first
+//                      commands after the boot read, [prefetch, background),
+//                      worth fetching once the boot is done; not past
+//                      prefetch: none
 // The image id is a hash of the tree (guest/tools/mktree.py), so writing
 // the header does not change it. HttpBase (an image over HTTP) honours
-// `prefetch` (HttpBaseOptions.prefetch); a file ignores it. An image
+// `prefetch` and `background` (HttpBaseOptions); a file ignores them. An image
 // without a header is read lazily, as before. The header is part of the
 // first 64 KiB, so it is part of the identity.
 

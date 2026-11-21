@@ -989,6 +989,8 @@ export interface DistroHeader {
 	size: number;
 	/** Bytes from the start of the image that a boot reads (= size: the whole image; 0: no hint). */
 	prefetch: number;
+	/** The end of what to fetch in the background once the boot is done, [prefetch, background): the warm set (0: none). */
+	background: number;
 	/** The distro's name (/usr/lib/kw-distro) and image id (/usr/lib/kw-image). */
 	distro: string;
 	image: string;
@@ -1007,11 +1009,14 @@ export function readDistroHeader(head: Uint8Array, size?: number): DistroHeader 
 	if (head.length < 128) return null;
 	for (let i = 0; i < 8; i++) if (head[i] !== HEADER_MAGIC.charCodeAt(i)) return null;
 	const dv = new DataView(head.buffer, head.byteOffset, 128);
-	if (dv.getUint32(8, true) !== 1 || dv.getUint32(12, true) < 128) return null;
-	const n = Number(dv.getBigUint64(16, true)), prefetch = Number(dv.getBigUint64(24, true));
+	const hlen = dv.getUint32(12, true);
+	if (dv.getUint32(8, true) !== 1 || hlen < 128) return null;
+	const n = Number(dv.getBigUint64(16, true)), prefetch = Math.min(Number(dv.getBigUint64(24, true)), n);
 	if (size !== undefined && n !== size) return null;
+	// A longer header (136) adds `background` at 128; one that names no more than the prefetch means none.
+	const bg = hlen >= 136 && head.length >= 136 ? Math.min(Number(new DataView(head.buffer, head.byteOffset, 136).getBigUint64(128, true)), n) : 0;
 	const str = (b: Uint8Array) => new TextDecoder().decode(b.subarray(0, b.indexOf(0) < 0 ? b.length : b.indexOf(0)));
-	return { size: n, prefetch: Math.min(prefetch, n), distro: str(head.subarray(32, 64)), image: str(head.subarray(64, 128)) };
+	return { size: n, prefetch, background: bg > prefetch ? bg : 0, distro: str(head.subarray(32, 64)), image: str(head.subarray(64, 128)) };
 }
 
 export interface HttpBaseOptions {
@@ -1019,6 +1024,16 @@ export interface HttpBaseOptions {
 	chunkSize?: number;
 	/** Largest single Range request, default 4 MiB. */
 	maxRequest?: number;
+	/**
+	 * Read-ahead for sequential readers: a read that misses right after
+	 * chunks already here (or on their way) also fetches the chunks after
+	 * it, in a separate request, four chunks at first and doubling while the
+	 * reader keeps up, up to this many bytes; the next window is asked for
+	 * once the reader is halfway into the last one. Chunks arrive streamed,
+	 * so a read waits only for its own bytes, and a failed read-ahead only
+	 * leaves its chunks to lazy reads. Default 4 MiB; 0 or false: off.
+	 */
+	readAhead?: number | false;
 	/**
 	 * Every range must come from the image open() saw: the same total size
 	 * and, when open() got one, the same ETag (or Last-Modified). A range of
@@ -1035,6 +1050,17 @@ export interface HttpBaseOptions {
 	 * (distro.ts), else nothing; false: nothing.
 	 */
 	prefetch?: number | false;
+	/**
+	 * Then fetch [prefetch, background) in the background (the warm set:
+	 * what the first commands after the boot read): once the prefetch has
+	 * settled and no request has been made for a second (the boot is done),
+	 * in sequential streamed pieces of `maxRequest` bytes, one at a time, so
+	 * a read waits at most for its own bytes of the piece in flight and
+	 * fetches chunks of a later piece itself. Not with the browser's Save-Data
+	 * set. Default: what the image's distro header says, unless `prefetch`
+	 * is false; false: nothing.
+	 */
+	background?: number | false;
 	/** Host diagnostics (a failed prefetch); default console.warn. */
 	log?: (msg: string) => void;
 }
@@ -1044,12 +1070,19 @@ export interface HttpBaseStats {
 	/** Requests (open()'s probe included) and the bytes they brought. */
 	requests: number;
 	bytes: number;
-	/** Range requests made for reads (not the probe or the prefetch). */
+	/** Range requests made for reads (not the probe, the prefetch or read-ahead). */
 	lazyRequests: number;
 	/** The prefetch: its size (0: none), the bytes it brought, and how it went. */
 	prefetch: number;
 	prefetchBytes: number;
 	prefetchState: "none" | "running" | "done" | "failed";
+	/** The background tier [prefetch, background) fetched after the boot settles: its end (0: none), the bytes it brought, and how it went. */
+	background: number;
+	backgroundBytes: number;
+	backgroundState: "none" | "waiting" | "running" | "done" | "failed" | "skipped";
+	/** Read-ahead (HttpBaseOptions.readAhead): range requests made ahead of a sequential reader, and the bytes they brought. */
+	aheadRequests: number;
+	aheadBytes: number;
 }
 
 export class HttpBase implements DiskBase {
@@ -1062,7 +1095,10 @@ export class HttpBase implements DiskBase {
 	chunks: Map<number, Uint8Array> = new Map();
 	/** Chunk index -> fetch in flight (a prefetched chunk: until its bytes arrived). */
 	pending: Map<number, Promise<void>> = new Map();
-	stats: HttpBaseStats = { requests: 0, bytes: 0, lazyRequests: 0, prefetch: 0, prefetchBytes: 0, prefetchState: "none" };
+	stats: HttpBaseStats = {
+		requests: 0, bytes: 0, lazyRequests: 0, prefetch: 0, prefetchBytes: 0, prefetchState: "none",
+		background: 0, backgroundBytes: 0, backgroundState: "none", aheadRequests: 0, aheadBytes: 0,
+	};
 	/** strict: the ETag or Last-Modified open() saw ("" if none), which every range must carry. */
 	validator: string | null = null;
 	/** The distro header of the image, if it has one. */
@@ -1072,9 +1108,10 @@ export class HttpBase implements DiskBase {
 	/**
 	 * Open the image: one Range request for its first chunk, which tells the
 	 * size, the validator and the distro header (and is kept). Then the
-	 * prefetch, if any, starts (see HttpBaseOptions.prefetch).
+	 * prefetch, if any, starts (see HttpBaseOptions.prefetch), and the
+	 * background tier waits for its turn (HttpBaseOptions.background).
 	 */
-	static async open(url: string, { chunkSize = 256 * 1024, maxRequest = 4 * 1024 * 1024, strict = false, prefetch, log }: HttpBaseOptions = {}): Promise<HttpBase> {
+	static async open(url: string, { chunkSize = 256 * 1024, maxRequest = 4 * 1024 * 1024, readAhead = 4 * 1024 * 1024, strict = false, prefetch, background, log }: HttpBaseOptions = {}): Promise<HttpBase> {
 		// The one request that asks the server (a cached copy is revalidated):
 		// its validator is what every later, cached response is held to.
 		const r = await fetch(url, { headers: { range: `bytes=0-${chunkSize - 1}` }, cache: "no-cache" });
@@ -1096,6 +1133,7 @@ export class HttpBase implements DiskBase {
 		b.#seen = validator;
 		b.chunkSize = chunkSize;
 		b.maxChunks = Math.max(1, Math.floor(maxRequest / chunkSize));
+		b.#aheadMax = readAhead ? Math.max(1, Math.floor(readAhead / chunkSize)) : 0;
 		b.stats.requests++;
 		b.stats.bytes += head.length;
 		if (head.length === Math.min(chunkSize, b.size)) {
@@ -1108,7 +1146,10 @@ export class HttpBase implements DiskBase {
 		}
 		b.header = readDistroHeader(head, b.size);
 		const n = prefetch === false ? 0 : Math.min(b.size, Math.max(0, prefetch ?? b.header?.prefetch ?? 0));
-		if (n > 0) b.#prefetch(n, validator);
+		const boot = n > 0 ? b.#prefetch(n, validator) : Promise.resolve();
+		const bg = background === false || (prefetch === false && background === undefined) ? 0
+			: Math.min(b.size, Math.max(0, background ?? b.header?.background ?? 0));
+		if (bg > n) void b.#background(n, bg, validator, boot);
 		return b;
 	}
 
@@ -1116,7 +1157,7 @@ export class HttpBase implements DiskBase {
 		const cs = this.chunkSize;
 		const c0 = Math.floor(off / cs), c1 = Math.floor((off + len - 1) / cs);
 		const waits: Promise<void>[] = [];
-		let runStart = -1;
+		let runStart = -1, miss = -1;
 		const flushRun = (end: number) => {
 			if (runStart >= 0) waits.push(this.#fetchRun(runStart, end));
 			runStart = -1;
@@ -1126,9 +1167,11 @@ export class HttpBase implements DiskBase {
 			const p = this.pending.get(c);
 			if (p) { flushRun(c); waits.push(p); continue; }
 			if (runStart < 0) runStart = c;
+			if (miss < 0) miss = c;
 			if (c - runStart + 1 >= this.maxChunks) flushRun(c + 1);
 		}
 		flushRun(c1 + 1);
+		if (this.#aheadMax) this.#readAhead(miss, c1);
 		const assemble = () => {
 			if (c0 === c1) {
 				const s = off - c0 * cs;
@@ -1185,29 +1228,107 @@ export class HttpBase implements DiskBase {
 		return r;
 	}
 
-	#fetchRun(c0: number, c1: number): Promise<void> {   // chunks [c0, c1)
+	/** Read-ahead (HttpBaseOptions.readAhead): the largest window in chunks (0: off), the chunk after the last window (-1: none) and its size. */
+	#aheadMax = 0;
+	#aheadEnd = -1;
+	#aheadWin = 0;
+
+	/**
+	 * After a read of chunks up to `last` that fetched from chunk `miss` on
+	 * (-1: it fetched nothing): a miss right after chunks here or on their
+	 * way starts a window after the read (or, when the reader caught up with
+	 * the last window, a window twice its size); a read halfway into the last
+	 * window asks for the next one, twice its size. A window stops before a
+	 * chunk that is here or on its way, and at the end of the image.
+	 */
+	#readAhead(miss: number, last: number): void {
+		const max = this.#aheadMax;
+		let from: number, win: number;
+		if (miss > 0 && (this.chunks.has(miss - 1) || this.pending.has(miss - 1))) {
+			win = Math.min(max, miss === this.#aheadEnd ? this.#aheadWin * 2 : 4);
+			from = last + 1;
+		} else if (miss < 0 && last < this.#aheadEnd && last >= this.#aheadEnd - Math.ceil(this.#aheadWin / 2)) {
+			win = Math.min(max, this.#aheadWin * 2);
+			from = this.#aheadEnd;
+		} else return;
+		const n = Math.ceil(this.size / this.chunkSize);
+		let to = from;
+		while (to < n && to - from < win && !this.chunks.has(to) && !this.pending.has(to)) to++;
+		if (to === from) return;
+		this.#aheadEnd = to;
+		this.#aheadWin = win;
+		void this.#fetchRun(from, to, true);
+	}
+
+	/**
+	 * Fetch chunks [c0, c1) in one Range request, streamed: each chunk is
+	 * kept, and its readers resume, as soon as its bytes are in. If the
+	 * request fails, a read's chunks reject (the guest gets EIO), while a
+	 * read-ahead's (`ahead`) settle without data, so that their reads fetch
+	 * them lazily; the returned promise never rejects for a read-ahead.
+	 */
+	#fetchRun(c0: number, c1: number, ahead = false): Promise<void> {
 		const cs = this.chunkSize;
 		const start = c0 * cs, end = Math.min(this.size, c1 * cs);
-		const p = (async () => {
+		const settle = new Map<number, { p: Promise<void>; ok: () => void; fail: (e: unknown) => void }>();
+		for (let c = c0; c < c1; c++) {
+			let ok!: () => void, fail!: (e: unknown) => void;
+			const p = new Promise<void>((res, rej) => { ok = res; fail = rej; });
+			p.catch(() => {});   // a chunk nobody waits for may reject
+			settle.set(c, { p, ok, fail });
+			this.pending.set(c, p);
+		}
+		const done = (c: number, err?: unknown) => {
+			const s = settle.get(c);
+			if (!s) return;
+			settle.delete(c);
+			if (this.pending.get(c) === s.p) this.pending.delete(c);
+			if (err === undefined || ahead) s.ok();
+			else s.fail(err);
+		};
+		const what = `${ahead ? "read-ahead" : "range"} ${start}-${end - 1}`;
+		let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+		return (async () => {
 			this.stats.requests++;
-			this.stats.lazyRequests++;
+			if (ahead) this.stats.aheadRequests++;
+			else this.stats.lazyRequests++;
 			const r = await this.#get({ range: `bytes=${start}-${end - 1}` }, (r) => {
-				if (r.status !== 206) throw new Error(`${this.url}: range ${start}-${end - 1}: HTTP ${r.status}`);
+				if (r.status !== 206) throw new Error(`${this.url}: ${what}: HTTP ${r.status}`);
 				if (this.validator !== null || this.#seen)
-					this.#check(r, totalOf(r) ?? -1, `range ${start}-${end - 1}`, this.validator ?? this.#seen);
+					this.#check(r, totalOf(r) ?? -1, what, this.validator ?? this.#seen);
 			});
-			const buf = new Uint8Array(await r.arrayBuffer());
-			if (buf.length !== end - start) throw new Error(`${this.url}: short range read`);
-			this.stats.bytes += buf.length;
-			for (let c = c0; c < c1; c++) {
-				const s = (c - c0) * cs;
-				this.#put(c, buf.subarray(s, Math.min(buf.length, s + cs)));
+			if (!r.body) throw new Error(`${this.url}: ${what}: no response body`);
+			reader = r.body.getReader();
+			let pos = start, c = c0, cur = new Uint8Array(cs), fill = 0;
+			for (;;) {
+				const { done: eof, value } = await reader.read();
+				if (eof) break;
+				if (pos + value.length > end) throw new Error(`${this.url}: ${what}: longer than asked`);
+				let o = 0;
+				while (o < value.length) {
+					const k = Math.min(cs - fill, value.length - o);
+					cur.set(value.subarray(o, o + k), fill);
+					fill += k;
+					o += k;
+					if (fill === cs || pos + o === end) {
+						this.#put(c, fill === cs ? cur : cur.subarray(0, fill));
+						done(c++);
+						cur = new Uint8Array(cs);
+						fill = 0;
+					}
+				}
+				pos += value.length;
+				this.stats.bytes += value.length;
+				if (ahead) this.stats.aheadBytes += value.length;
 			}
-		})();
-		for (let c = c0; c < c1; c++) this.pending.set(c, p);
-		const clear = () => { for (let c = c0; c < c1; c++) if (this.pending.get(c) === p) this.pending.delete(c); };
-		p.then(clear, clear);
-		return p;
+			if (pos !== end) throw new Error(`${this.url}: ${what}: short range read`);
+		})().catch((e: unknown) => {
+			void reader?.cancel().catch(() => {});
+			const err = e ?? new Error(`${this.url}: ${what} failed`);
+			for (const c of [...settle.keys()]) done(c, err);
+			if (!ahead) throw err;
+			this.log(`[host] ${this.url}: ${what} failed (${(e as Error)?.message ?? e}); reading lazily`);
+		});
 	}
 
 	/** Keep chunk c (the last one padded, so block reads are uniform). */
@@ -1221,19 +1342,71 @@ export class HttpBase implements DiskBase {
 	}
 
 	/**
-	 * Fetch [0, n) in one request, streamed: each chunk is kept as soon as
-	 * its bytes are in, and reads of a chunk not in yet wait for it. n = size:
-	 * a plain GET (no Range header); else a Range request from the first
-	 * chunk open() does not have. Every response is checked like a lazy
-	 * range (size, and with strict the validator). A failure settles the
-	 * chunks that did not arrive without data, so their reads fall back to
-	 * lazy ranges.
+	 * The boot prefetch: [0, n) in one streamed request (#stream; n = size: a
+	 * plain GET of the whole image). A failure leaves its chunks to lazy
+	 * reads. The promise settles when it is over, and never rejects.
 	 */
-	#prefetch(n: number, validator: string): void {
-		const cs = this.chunkSize, whole = n >= this.size;
-		const c1 = Math.ceil(Math.min(n, this.size) / cs);
-		let c0 = 0;
-		while (c0 < c1 && this.chunks.has(c0)) c0++;
+	#prefetch(n: number, validator: string): Promise<void> {
+		const whole = n >= this.size;
+		this.stats.prefetch = whole ? this.size : Math.min(this.size, Math.ceil(n / this.chunkSize) * this.chunkSize);
+		this.stats.prefetchState = "running";
+		return this.#stream(0, n, validator, "prefetch", (k) => { this.stats.prefetchBytes += k; }).then(() => {
+			this.stats.prefetchState = "done";
+		}, (e: unknown) => {
+			this.stats.prefetchState = "failed";
+			this.log(`[host] ${this.url}: prefetch failed (${(e as Error)?.message ?? e}); reading lazily`);
+		});
+	}
+
+	/**
+	 * The background tier (HttpBaseOptions.background): [from, to) once
+	 * `boot` (the prefetch) has settled and no request has been made for a
+	 * second, in pieces of maxChunks chunks, one after the other. A failed
+	 * piece ends it (what is left is read lazily).
+	 */
+	async #background(from: number, to: number, validator: string, boot: Promise<void>): Promise<void> {
+		this.stats.background = to;
+		this.stats.backgroundState = "waiting";
+		if ((globalThis as { navigator?: { connection?: { saveData?: boolean } } }).navigator?.connection?.saveData) {
+			this.stats.backgroundState = "skipped";
+			return;
+		}
+		await boot;
+		const nap = (ms: number) => new Promise<void>((r) => (setTimeout(r, ms) as unknown as { unref?: () => void }).unref?.());
+		for (let seen = this.stats.requests, quiet = 0; quiet < 1000;) {
+			await nap(250);
+			if (this.stats.requests !== seen || this.pending.size) { seen = this.stats.requests; quiet = 0; } else quiet += 250;
+		}
+		this.stats.backgroundState = "running";
+		const piece = this.maxChunks * this.chunkSize;
+		try {
+			for (let a = from; a < to; a += piece)
+				await this.#stream(a, Math.min(to, a + piece), validator, "background", (k) => { this.stats.backgroundBytes += k; });
+			this.stats.backgroundState = "done";
+		} catch (e) {
+			this.stats.backgroundState = "failed";
+			this.log(`[host] ${this.url}: background fetch failed (${(e as Error)?.message ?? e}); reading lazily`);
+		}
+	}
+
+	/**
+	 * Fetch [start, end) in one request, streamed: each chunk is kept as soon
+	 * as its bytes are in, and reads of a chunk not in yet wait for it. The
+	 * request starts at the first chunk not here and ends after the last one
+	 * (nothing missing: no request); chunks in between that are here or on
+	 * their way are left as they are. [0, size): a plain GET (no Range
+	 * header). Every response is checked like a lazy range (size, and the
+	 * validator whether strict or not: a cached copy of another image must
+	 * not mix in). A failure rejects and settles the chunks that did not
+	 * arrive without data, so their reads fall back to lazy ranges.
+	 */
+	async #stream(start: number, end: number, validator: string, what: string, count: (n: number) => void): Promise<void> {
+		const cs = this.chunkSize, whole = start === 0 && end >= this.size;
+		let c0 = Math.floor(start / cs), c1 = Math.ceil(Math.min(end, this.size) / cs);
+		if (!whole) {
+			while (c0 < c1 && (this.chunks.has(c0) || this.pending.has(c0))) c0++;
+			while (c1 > c0 && (this.chunks.has(c1 - 1) || this.pending.has(c1 - 1))) c1--;
+		}
 		if (c0 >= c1) return;
 		const settle = new Map<number, () => void>();
 		for (let c = c0; c < c1; c++) {
@@ -1248,38 +1421,35 @@ export class HttpBase implements DiskBase {
 			this.pending.delete(c);
 			s();
 		};
-		const start = whole ? 0 : c0 * cs, end = whole ? this.size : Math.min(this.size, c1 * cs);
-		this.stats.prefetch = end;
-		this.stats.prefetchState = "running";
+		const from = whole ? 0 : c0 * cs, to = whole ? this.size : Math.min(this.size, c1 * cs);
 		let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
-		void (async () => {
+		try {
 			this.stats.requests++;
-			// Checked whether strict or not: a cached copy of another image must not mix in.
-			const r = await this.#get(whole ? undefined : { range: `bytes=${start}-${end - 1}` }, (r) => {
+			const r = await this.#get(whole ? undefined : { range: `bytes=${from}-${to - 1}` }, (r) => {
 				if (whole) {
 					if (r.status !== 200) throw new Error(`HTTP ${r.status}`);
 					const len = r.headers.get("content-encoding") ? null : r.headers.get("content-length");
 					this.#check(r, len === null ? undefined : Number(len), "GET", validator);
 				} else {
 					if (r.status !== 206) throw new Error(`HTTP ${r.status}`);
-					this.#check(r, totalOf(r) ?? -1, `prefetch ${start}-${end - 1}`, validator);
+					this.#check(r, totalOf(r) ?? -1, `${what} ${from}-${to - 1}`, validator);
 				}
 			});
 			if (!r.body) throw new Error("no response body");
 			reader = r.body.getReader();
-			let pos = start, cur = new Uint8Array(cs), fill = 0;
+			let pos = from, cur = new Uint8Array(cs), fill = 0;
 			for (;;) {
 				const { done: eof, value } = await reader.read();
 				if (eof) break;
 				let o = 0;
 				while (o < value.length) {
-					if (pos + o >= end) throw new Error("longer than expected");
-					const k = Math.min(cs - fill, value.length - o, end - pos - o);
+					if (pos + o >= to) throw new Error("longer than expected");
+					const k = Math.min(cs - fill, value.length - o, to - pos - o);
 					cur.set(value.subarray(o, o + k), fill);
 					fill += k;
 					o += k;
 					const at = pos + o;
-					if (fill === cs || at === end) {
+					if (fill === cs || at === to) {
 						const c = Math.floor((at - 1) / cs);
 						if (!this.chunks.has(c)) this.#put(c, fill === cs ? cur : cur.subarray(0, fill));
 						done(c);
@@ -1289,17 +1459,15 @@ export class HttpBase implements DiskBase {
 				}
 				pos += value.length;
 				this.stats.bytes += value.length;
-				this.stats.prefetchBytes += value.length;
+				count(value.length);
 			}
-			if (pos !== end) throw new Error(`ended at ${pos} of ${end}`);
-			this.stats.prefetchState = "done";
-		})().catch((e) => {
+			if (pos !== to) throw new Error(`ended at ${pos} of ${to}`);
+		} catch (e) {
 			void reader?.cancel().catch(() => {});
-			this.stats.prefetchState = "failed";
-			this.log(`[host] ${this.url}: prefetch failed (${(e as Error)?.message ?? e}); reading lazily`);
-		}).finally(() => {
+			throw e;
+		} finally {
 			for (const c of [...settle.keys()]) done(c);
-		});
+		}
 	}
 }
 

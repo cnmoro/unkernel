@@ -2,16 +2,18 @@
 // Copyright (C) 2026 Pooya Parsa <pooya@pi0.io>
 // Unit tests for the CowDisk overlay logic (core/block.ts) with a fake store,
 // the kwsparse format, FileDisk, Kernel.requestSync() and the disk side of
-// machine snapshots (write generations, sealing, snapshotDiskMismatch).
+// machine snapshots (write generations, sealing, snapshotDiskMismatch), and
+// HttpBase's read-ahead against a local Range server.
 //
 //   node --test test/block.test.ts
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { gzipSync } from "node:zlib";
-import { CowDisk, SparseBase, ZeroBase, type BlockDevice, type DiskBase, type DiskSnapshotState, type OverlayStore, type StoreIndex } from "../js/core/block.ts";
+import { CowDisk, HttpBase, SparseBase, ZeroBase, type BlockDevice, type DiskBase, type DiskSnapshotState, type OverlayStore, type StoreIndex } from "../js/core/block.ts";
 import { snapshotDiskMismatch } from "../js/core/snapshot.ts";
 import { decodeKwsparse, encodeKwsparse, readKwsparse } from "../js/core/kwsparse.ts";
 import { IRQ_SYNC, Kernel } from "../js/core/kernel.ts";
@@ -551,5 +553,199 @@ test("snapshots: FileDisk keeps its write generation in a sidecar file once a sn
 		ro2.close();
 	} finally {
 		fs.rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+// HttpBase read-ahead (HttpBaseOptions.readAhead), against a local server
+// that answers single Range requests from a pattern image and records them.
+const KiB = 1024, CS = 256 * KiB;
+
+async function rangeServer(size: number, { fail, hold }: { fail?: (start: number, end: number) => boolean; hold?: (start: number, end: number) => Promise<void> | undefined } = {}) {
+	const img = new Uint8Array(size);
+	for (let i = 0; i < size; i++) img[i] = (i * 7 + (i >> 12)) & 255;
+	const ranges: Array<[number, number]> = [];
+	const server = http.createServer(async (req, res) => {
+		const m = /^bytes=(\d+)-(\d+)$/.exec(req.headers.range ?? "");
+		if (!m) { res.writeHead(200, { "content-length": size, etag: '"img"' }); res.end(img); return; }
+		const start = Number(m[1]), end = Math.min(size - 1, Number(m[2]));
+		ranges.push([start, end + 1]);
+		if (fail?.(start, end + 1)) { res.writeHead(500); res.end(); return; }
+		res.writeHead(206, { "content-range": `bytes ${start}-${end}/${size}`, "content-length": end - start + 1, etag: '"img"' });
+		const wait = hold?.(start, end + 1);
+		if (wait) {
+			res.write(img.subarray(start, start + CS));
+			await wait;
+			res.end(img.subarray(start + CS, end + 1));
+		} else res.end(img.subarray(start, end + 1));
+	});
+	await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+	const url = `http://127.0.0.1:${(server.address() as { port: number }).port}/img`;
+	return { img, ranges, url, close: () => new Promise<void>((r) => { server.closeAllConnections(); server.close(() => r()); }) };
+}
+
+/** Until no fetch is in flight (a read-ahead may still run after the reads). */
+async function settled(b: HttpBase) {
+	while (b.pending.size) await Promise.allSettled([...b.pending.values()]);
+}
+
+/** Read [from, to) in `step` pieces, one after the other, checking the bytes. */
+async function readSeq(b: HttpBase, img: Uint8Array, from: number, to: number, step = 128 * KiB) {
+	for (let off = from; off < to; off += step) {
+		const got = await b.read(off, Math.min(step, to - off));
+		assert.deepEqual(got, img.subarray(off, Math.min(off + step, to)), `bytes at ${off}`);
+	}
+}
+
+test("HttpBase read-ahead: a sequential reader gets growing windows ahead of it, and the bytes are right", async () => {
+	const s = await rangeServer(16 * 1024 * KiB);
+	try {
+		const b = await HttpBase.open(s.url, { prefetch: false, strict: true });
+		await readSeq(b, s.img, CS, 12 * 1024 * KiB);
+		await settled(b);
+		// 11.75 MiB: 47 chunks. Without read-ahead every chunk is a request of its own.
+		assert.ok(b.stats.aheadRequests >= 3, `read-ahead requests: ${b.stats.aheadRequests}`);
+		assert.ok(b.stats.lazyRequests <= 3, `lazy requests: ${b.stats.lazyRequests}`);
+		const sizes = s.ranges.slice(1).map(([a, e]) => (e - a) / CS);
+		assert.equal(Math.max(...sizes), 16, `request sizes in chunks: ${sizes}`);
+		// Never more than the window past what was read.
+		assert.ok(Math.max(...s.ranges.map(([, e]) => e)) <= 16 * 1024 * KiB);
+		assert.equal(b.stats.bytes, s.ranges.reduce((n, [a, e]) => n + e - a, 0));
+	} finally {
+		await s.close();
+	}
+});
+
+test("HttpBase read-ahead: scattered reads fetch only their own chunks; readAhead: false turns it off", async () => {
+	const s = await rangeServer(16 * 1024 * KiB);
+	try {
+		const b = await HttpBase.open(s.url, { prefetch: false });
+		for (const c of [9, 3, 30, 17, 50]) assert.deepEqual(await b.read(c * CS + 100, 4096), s.img.subarray(c * CS + 100, c * CS + 4196));
+		assert.equal(b.stats.aheadRequests, 0);
+		assert.equal(b.stats.lazyRequests, 5);
+		const off = await HttpBase.open(s.url, { prefetch: false, readAhead: false });
+		await readSeq(off, s.img, 0, 2 * 1024 * KiB);
+		await settled(off);
+		assert.equal(off.stats.aheadRequests, 0);
+		assert.equal(off.stats.lazyRequests, 7);   // chunk 0 came with open()
+	} finally {
+		await s.close();
+	}
+});
+
+test("HttpBase read-ahead: a failed read-ahead leaves its chunks to lazy reads, which still fail loudly", async () => {
+	let failAll = false;
+	const s = await rangeServer(8 * 1024 * KiB, { fail: (a, e) => failAll || e - a > 2 * CS });   // every read-ahead (4+ chunks) fails
+	try {
+		const logs: string[] = [];
+		const b = await HttpBase.open(s.url, { prefetch: false, log: (m) => logs.push(m) });
+		await readSeq(b, s.img, 0, 4 * 1024 * KiB);
+		await settled(b);
+		assert.ok(b.stats.aheadRequests >= 1);
+		assert.ok(logs.some((m) => /read-ahead .* failed/.test(m)), logs.join("\n"));
+		failAll = true;
+		await assert.rejects(async () => b.read(30 * CS, 4096), /HTTP 500/);
+	} finally {
+		await s.close();
+	}
+});
+
+test("HttpBase read-ahead: chunks arrive streamed, so a read waits only for its own bytes", async () => {
+	const gate = deferred();
+	const s = await rangeServer(8 * 1024 * KiB, { hold: (a, e) => (e - a > CS ? gate.promise : undefined) });
+	try {
+		const b = await HttpBase.open(s.url, { prefetch: false });
+		await b.read(4 * CS, 4096);   // chunk 4: lazy (chunk 3 is not here)
+		await b.read(5 * CS, 4096);   // chunk 5: lazy, after chunk 4: read-ahead of chunks 6-9, held after chunk 6
+		assert.deepEqual(s.ranges.at(-1), [6 * CS, 10 * CS]);
+		const r6 = await Promise.race([Promise.resolve(b.read(6 * CS, 4096)), new Promise((r) => setTimeout(() => r("timeout"), 2000))]);
+		assert.deepEqual(r6, s.img.subarray(6 * CS, 6 * CS + 4096));
+		const r7 = b.read(7 * CS, 4096);
+		assert.ok(r7 instanceof Promise);
+		gate.resolve();
+		assert.deepEqual(await r7, s.img.subarray(7 * CS, 7 * CS + 4096));
+		await settled(b);
+	} finally {
+		gate.resolve();
+		await s.close();
+	}
+});
+
+// The distro header's background field and HttpBase's background tier
+// (HttpBaseOptions.background).
+test("readDistroHeader: a 136-byte header adds background; the 128-byte one has none", async () => {
+	const { readDistroHeader } = await import("../js/core/block.ts");
+	const head = (len: number, size: number, prefetch: number, background?: number) => {
+		const b = new Uint8Array(256), dv = new DataView(b.buffer);
+		b.set(new TextEncoder().encode("KWDISTRO"));
+		dv.setUint32(8, 1, true);
+		dv.setUint32(12, len, true);
+		dv.setBigUint64(16, BigInt(size), true);
+		dv.setBigUint64(24, BigInt(prefetch), true);
+		b.set(new TextEncoder().encode("debian"), 32);
+		b.set(new TextEncoder().encode("debian-13-x"), 64);
+		if (background !== undefined) dv.setBigUint64(128, BigInt(background), true);
+		return b;
+	};
+	const MiB = 1024 * KiB;
+	assert.deepEqual(readDistroHeader(head(128, 72 * MiB, 3 * MiB, 20 * MiB), 72 * MiB),
+		{ size: 72 * MiB, prefetch: 3 * MiB, background: 0, distro: "debian", image: "debian-13-x" });
+	assert.equal(readDistroHeader(head(136, 72 * MiB, 3 * MiB, 20 * MiB), 72 * MiB)?.background, 20 * MiB);
+	assert.equal(readDistroHeader(head(136, 72 * MiB, 3 * MiB, 99 * MiB))?.background, 72 * MiB);   // capped at the size
+	assert.equal(readDistroHeader(head(136, 72 * MiB, 3 * MiB, 2 * MiB))?.background, 0);   // not past the prefetch: none
+	assert.equal(readDistroHeader(head(136, 72 * MiB, 3 * MiB, 20 * MiB).subarray(0, 128))?.background, 0);
+});
+
+test("HttpBase background: once the boot is quiet, [prefetch, background) comes in sequential pieces; reads in it need no request", async () => {
+	const MiB = 1024 * KiB;
+	const s = await rangeServer(8 * MiB);
+	try {
+		const b = await HttpBase.open(s.url, { prefetch: MiB, background: 6 * MiB, maxRequest: 2 * MiB, readAhead: false });
+		assert.equal(b.stats.background, 6 * MiB);
+		const t0 = Date.now();
+		while (b.stats.backgroundState !== "done") {
+			assert.ok(!["failed", "skipped"].includes(b.stats.backgroundState), b.stats.backgroundState);
+			assert.ok(Date.now() - t0 < 10000, `background: ${b.stats.backgroundState}`);
+			await new Promise((r) => setTimeout(r, 50));
+		}
+		assert.deepEqual(s.ranges, [[0, CS], [CS, MiB], [MiB, 3 * MiB], [3 * MiB, 5 * MiB], [5 * MiB, 6 * MiB]]);
+		assert.equal(b.stats.backgroundBytes, 5 * MiB);
+		const n = s.ranges.length;
+		for (const off of [MiB, 3 * MiB - 100, 6 * MiB - 4096]) {
+			const got = b.read(off, 4096);
+			assert.ok(!(got instanceof Promise), `read at ${off} is cached`);
+			assert.deepEqual(got, s.img.subarray(off, off + 4096));
+		}
+		assert.equal(s.ranges.length, n);
+		// background: false, or prefetch: false without a background option: none.
+		for (const opts of [{ prefetch: MiB, background: false as const }, { prefetch: false as const }]) {
+			const off = await HttpBase.open(s.url, { ...opts, readAhead: false });
+			assert.equal(off.stats.backgroundState, "none");
+		}
+	} finally {
+		await s.close();
+	}
+});
+
+test("HttpBase background: it waits while reads keep the image busy, and skips chunks a read fetched", async () => {
+	const MiB = 1024 * KiB;
+	const s = await rangeServer(8 * MiB);
+	try {
+		const b = await HttpBase.open(s.url, { prefetch: false, background: 4 * MiB, maxRequest: 4 * MiB, readAhead: false });
+		// A read every 300 ms for 1.5 s: the tier must not start meanwhile.
+		for (let i = 0; i < 5; i++) {
+			await b.read((i + 1) * CS, 4096);
+			await new Promise((r) => setTimeout(r, 300));
+			assert.equal(b.stats.backgroundState, "waiting");
+		}
+		const t0 = Date.now();
+		while (b.stats.backgroundState !== "done") {
+			assert.ok(Date.now() - t0 < 10000, `background: ${b.stats.backgroundState}`);
+			await new Promise((r) => setTimeout(r, 50));
+		}
+		// Chunks 1-5 came lazily: the tier asks only for chunks 6-15.
+		assert.deepEqual(s.ranges.at(-1), [6 * CS, 4 * MiB]);
+		assert.deepEqual(b.read(4 * MiB - 4096, 4096), s.img.subarray(4 * MiB - 4096, 4 * MiB));
+	} finally {
+		await s.close();
 	}
 });

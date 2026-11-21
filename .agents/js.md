@@ -1007,6 +1007,31 @@ parts that are easy to get wrong.
   missing chunks to lazy ranges. `stats` (`HttpBaseStats`, also on
   `BaseDisk` and `DistroDisk`): requests, bytes, lazy requests, the
   prefetch's size, bytes and state.
+- `HttpBase` `readAhead` (default 4 MiB; 0 or `false` turns it off; not
+  in the `http` spec): a read that misses right after chunks already
+  here or on their way also fetches the chunks after it in a separate
+  request, 1 MiB first and doubling while the reader keeps up (the next
+  window is asked for once the reader is halfway into the last one), up
+  to `readAhead`. One stream is tracked; a window stops before a chunk
+  that is here or on its way. Every range request (lazy, read-ahead) is
+  streamed, so a read waits only for its own chunks; a failed read-ahead
+  leaves its chunks to lazy ranges, which fail the read if they fail.
+  Why: the guest's reads stop at 512 KiB (kwblk `max_hw_sectors`), so a
+  sequentially read file (apt's 16 MiB `srcpkgcache.bin`) was one round
+  trip per 256–512 KiB. Measured 2026-11-21, Node, Debian image without
+  the warm-set layout, a local server adding 300 ms per request:
+  `apt-cache show bash` 14.2 s, 73 requests, 29.8 MiB without it; 9.6 s,
+  39 requests, 36.3 MiB with it. `stats`: read-ahead requests and bytes.
+- `HttpBase` `background` (default: the distro header's, unless
+  `prefetch` is false; `false` turns it off; not in the `http` spec):
+  `[prefetch, background)`, the image's warm set, fetched once the
+  prefetch has settled and no request has been made for a second, in
+  sequential streamed pieces of `maxRequest` (4 MiB), one at a time; a
+  read waits only for its own chunks of the piece in flight and fetches
+  later ones itself, and a piece skips chunks that are already here or
+  on their way. Not with Save-Data (`navigator.connection.saveData`).
+  The chunks stay in memory like any other (Debian: about 17 MiB more).
+  `stats`: its end, bytes and state (`waiting` until the boot is quiet).
 - The distro image (`js/core/distro.ts`; `createKernel({ distro })`, the
   CLI's `--distro`): an erofs or ext4 file system labelled kwroot that the
   base initramfs of the bundle (`unkernel.wasm`) mounts under the root
