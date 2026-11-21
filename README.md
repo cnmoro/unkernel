@@ -1,9 +1,11 @@
 <h1 align="center"><img alt="unkernel" src="assets/logo-wordmark.svg" width="400"></h1>
 
-**A real Linux kernel, compiled to WebAssembly. It boots to a shell in less than a second.**
+**A real Linux kernel compiled to WebAssembly, with Debian as the default.**
 
 <p align="center">
-  <a href="https://unkernel.dev/"><b>Try it</b></a> ·
+  <a href="#what-this-fork-adds"><b>Fork changes</b></a> ·
+  <a href="#deploy-on-a-server">Deploy</a> ·
+  <a href="#-try-it-in-the-browser">Try it</a> ·
   <a href="#-performance">Performance</a> ·
   <a href="#-a-real-kernel">Features</a> ·
   <a href="#-run-it-from-the-terminal">CLI</a> ·
@@ -11,6 +13,278 @@
   <a href="#-benchmarks">Benchmarks</a> ·
   <a href="#-use-it-from-javascript">JavaScript SDK</a>
 </p>
+
+## What this fork adds
+
+- **Debian 13 is the default** in the web UI and CLI. It boots with systemd as PID 1. The image includes a minimal Xfce desktop, TigerVNC, Git, GCC, Make, pkg-config, Python and ripgrep.
+- **Tailscale runs as a systemd service** after the official installer and `sudo tailscale up`. The image supplies a userspace-networking override and a SOCKS5 listener on guest `127.0.0.1:1055`. Peer traffic uses DERP relays because the browser guest’s network carries outbound TCP.
+- **Terminal and desktop from one page.** Choose Terminal or Desktop at boot, then switch views without restarting Debian. The embedded noVNC client talks to TigerVNC over vsock and requests a new guest resolution when the viewport changes. Desktop shortcuts go to Xfce, and the desktop uses the full content area.
+- **Portable VM storage.** Choose a local folder before boot to save the guest’s installed packages, files and settings in its `unkernel-data` subdirectory. Another browser can reopen the same folder. IndexedDB and temporary sessions are also available. Use a saved folder from one browser at a time.
+- **Disk growth and compaction.** A new folder disk starts at 4 GiB and can be created larger or grown later. Debian resizes ext4 at boot. Unkernel checkpoints accumulated write batches after a clean shutdown when compaction thresholds are met. **Compact now** is available after shutdown. Both the web UI’s **Power off** and `sudo shutdown -h now` take the clean shutdown path. Wait for **Powered off** before closing the tab.
+- **Crash recovery.** The folder store publishes completed write batches and commits a replacement checkpoint before pruning old files. Ext4 can replay its journal. A forced Chrome crash test recovered a previously synced file from the same folder in a fresh browser profile. Unflushed writes and interrupted application operations can still be lost or left incomplete. Use **Guest → Data disk → Export** for backups.
+- **More guest RAM and configurable zram.** **System → Memory** offers up to 4 GiB with smaller allocation fallbacks. **System → Compressed swap (zram)** defaults to half of usable guest RAM and supports fixed sizes or Off. An experimental Memory64 kernel booted Debian with 6 GiB in Chrome. The regular web build ships wasm32 and offers up to 4 GiB.
+- **Live host folder sharing.** **Guest → Shared folders → Share folder…** mounts a selected host folder under `/mnt/shared-<name>` for the current session. Shares are read-only by default. **Allow guest changes** enables writes and deletions on the host. Atomic renames, Unix ownership and permission changes, and links are unavailable. Unmount shared folders before suspending a VM.
+- **Fork packaging.** The CLI and SDK fetch packaged distro assets from this fork, and the GitHub release workflow can publish fork assets without publishing to the upstream npm package. The fork includes checks for Debian’s systemd console and folder storage.
+
+## Deploy on a server
+
+This runbook uses an Ubuntu 24.04 or Debian host with systemd, Caddy for HTTPS
+and access control, and a local Wisp v1 relay. Replace `vm.example.com` with
+the deployment hostname everywhere. Point DNS at the server and allow inbound
+TCP 80 and 443 for Caddy and certificate issuance. Keep the Node app and relay
+bound to loopback.
+
+The services stay up across logouts and host reboots. Each VM runs in the
+user’s browser. Guest RAM, installed packages and saved disks stay on the
+user’s device, while the server serves the app and distro images and Wisp
+relays guest internet traffic. An open browser session is needed to keep that
+VM running. The web app can boot offline with `?net=0`.
+
+### 1. Build the fork’s production assets
+
+Use Node.js 24 or newer, the repository’s pinned pnpm, Zig 0.16.x, and LLVM
+22 with the WebAssembly target. Put the tools on the build user’s `PATH`.
+The build compiles a patched linker plus the kernels and distro images.
+Allow room for the source trees and build outputs. Run it on a separate build
+machine if the serving host has limited CPU, memory or disk. [Node.js downloads](https://nodejs.org/en/download) · [Zig downloads](https://ziglang.org/download/) · [LLVM apt repository](https://apt.llvm.org/)
+
+For an Ubuntu 24.04 builder, install the host packages below. Use the matching
+LLVM repository for another distro or release.
+
+```sh
+sudo apt-get update
+sudo apt-get install -y ca-certificates curl git build-essential cmake ninja-build \
+  flex bison bc m4 python3 patch perl e2fsprogs gzip bzip2 xz-utils zstd gpgv
+sudo install -d -m 0755 /etc/apt/keyrings
+curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key |
+  sudo tee /etc/apt/keyrings/apt.llvm.org.asc >/dev/null
+echo 'deb [signed-by=/etc/apt/keyrings/apt.llvm.org.asc] https://apt.llvm.org/noble/ llvm-toolchain-noble-22 main' |
+  sudo tee /etc/apt/sources.list.d/llvm-22.list >/dev/null
+sudo apt-get update
+sudo apt-get install -y clang-22 lld-22 llvm-22
+export PATH="/usr/lib/llvm-22/bin:$PATH"
+```
+
+Install the pinned pnpm with `npm install --global pnpm@12.14.0` or with your
+Node toolchain’s package manager. Build as an unprivileged
+user from the exact fork commit you intend to deploy.
+
+```sh
+git clone https://github.com/cnmoro/unkernel.git
+cd unkernel
+git rev-parse HEAD
+pnpm install --frozen-lockfile --prod=false
+./setup.sh --check
+KW_RELEASE=1 KW_DISTRO_FORMATS=erofs ./setup.sh
+test -s vendor/build/bundle/unkernel.wasm
+test -s vendor/build/distro/debian.erofs
+NITRO_PRESET=node-server KW_LOCAL=1 \
+  KW_KERNEL="$PWD/vendor/build/bundle/unkernel.wasm" \
+  KW_DISTROS="$PWD/vendor/build/distro" pnpm build:web
+test -f web/.output/server/index.mjs
+find web/.output/public/distros -maxdepth 1 -name '*.erofs'
+```
+
+Keep the complete `web/.output/` tree together. It includes the app, both
+kernels and the distro images. For a separate build machine, archive it with
+`tar -C web/.output -czf unkernel-web.tar.gz .` and transfer the archive.
+A matching fork GitHub release can also supply the kernel and image assets
+for a web build. In that case use
+`NITRO_PRESET=node-server KW_LOCAL=0 KW_KERNEL_REPO=cnmoro/unkernel KW_KERNEL_RELEASE="$fork_tag" pnpm build:web`, with `fork_tag` set to the published tag.
+Use the fork’s assets so Debian’s desktop, systemd setup and zram are included.
+
+### 2. Run the web app under systemd
+
+Create a dedicated runtime user and copy the production output into a versioned,
+read-only deployment directory. Run these commands from the built checkout.
+If you transferred the archive, unpack it into the release directory in place
+of the `cp` command, using the builder’s revision in the directory name.
+
+```sh
+getent passwd unkernel >/dev/null ||
+  sudo useradd --system --user-group --no-create-home --shell /usr/sbin/nologin unkernel
+release="$(git rev-parse --short=12 HEAD)-$(date -u +%Y%m%dT%H%M%SZ)"
+sudo install -d -m 0755 "/opt/unkernel/releases/$release"
+sudo cp -a web/.output/. "/opt/unkernel/releases/$release/"
+sudo chown -R root:root "/opt/unkernel/releases/$release"
+sudo chmod -R a+rX "/opt/unkernel/releases/$release"
+sudo ln -sfn "/opt/unkernel/releases/$release" /opt/unkernel/next
+sudo mv -Tf /opt/unkernel/next /opt/unkernel/current
+```
+
+Create `/etc/systemd/system/unkernel-web.service`. Use a system-wide Node
+24+ binary in `ExecStart`. Adjust the example’s absolute path to match your
+installation.
+
+```ini
+[Unit]
+Description=Unkernel web app
+After=network.target
+
+[Service]
+Type=simple
+User=unkernel
+Group=unkernel
+WorkingDirectory=/opt/unkernel/current
+Environment=NODE_ENV=production
+Environment=HOST=127.0.0.1
+Environment=PORT=3000
+ExecStart=/usr/local/bin/node /opt/unkernel/current/server/index.mjs
+Restart=on-failure
+RestartSec=3s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```sh
+sudo systemctl daemon-reload
+sudo systemctl enable --now unkernel-web
+curl -fsS -o /dev/null http://127.0.0.1:3000/
+```
+
+### 3. Run the Wisp relay under systemd
+
+Wisp accepts a WebSocket from the browser and multiplexes the guest’s outbound
+connections through it. Install the Wisp v1 relay in a dedicated Python
+environment. Keep its default loopback and private-address restrictions.
+[Mercury Workshop Wisp server](https://github.com/MercuryWorkshop/wisp-server-python) · [Python package](https://pypi.org/project/wisp-python/)
+
+```sh
+sudo apt-get install -y python3-venv
+getent passwd unkernel-wisp >/dev/null ||
+  sudo useradd --system --user-group --no-create-home --shell /usr/sbin/nologin unkernel-wisp
+sudo python3 -m venv /opt/unkernel-wisp/venv
+sudo /opt/unkernel-wisp/venv/bin/python -m pip install 'wisp-python==0.11.0'
+```
+
+Create `/etc/systemd/system/unkernel-wisp.service`.
+
+```ini
+[Unit]
+Description=Unkernel Wisp v1 relay
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=unkernel-wisp
+Group=unkernel-wisp
+ExecStart=/opt/unkernel-wisp/venv/bin/python -m wisp.server --host 127.0.0.1 --port 6680 --threads 2 --block-udp
+Restart=on-failure
+RestartSec=3s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```sh
+sudo systemctl daemon-reload
+sudo systemctl enable --now unkernel-wisp
+sudo ss -ltnp '( sport = :3000 or sport = :6680 )'
+```
+
+Both listeners should be on `127.0.0.1`. The relay needs server-side DNS and
+outbound TCP to the sites guests use. Protect public access to the relay with
+authentication or a private network. An Origin check alone does not
+authenticate a client.
+
+### 4. Put both services behind HTTPS
+
+Install Caddy 2.8 or newer with its systemd service. Run `caddy hash-password`
+to generate the bcrypt hash for the user in the example. Add this site block
+to `/etc/caddy/Caddyfile` and substitute your hostname and hash. Caddy manages
+TLS and forwards WebSocket upgrades. The same login protects the app and
+relay, and the relay accepts the site’s exact Origin. [Install Caddy](https://caddyserver.com/docs/install) · [Caddy basic auth](https://caddyserver.com/docs/caddyfile/directives/basic_auth)
+
+```caddyfile
+vm.example.com {
+    route {
+        basic_auth {
+            vmadmin REPLACE_WITH_BCRYPT_HASH
+        }
+
+        @wrong_origin {
+            path /wisp/
+            not header Origin https://vm.example.com
+        }
+        respond @wrong_origin 403
+
+        handle /wisp/ {
+            rewrite * /
+            reverse_proxy 127.0.0.1:6680 {
+                header_up -Authorization
+            }
+        }
+
+        handle {
+            reverse_proxy 127.0.0.1:3000 {
+                header_up -Authorization
+            }
+        }
+    }
+}
+```
+
+```sh
+sudo caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+sudo systemctl enable --now caddy
+sudo systemctl reload caddy
+```
+
+Serve the app at the hostname’s root so `/vm-sw.js`, `/vm/` and `/distros/`
+reach the right handlers. Preserve the app’s `Cross-Origin-Opener-Policy:
+same-origin` and `Cross-Origin-Embedder-Policy: require-corp` headers for
+cross-origin isolation and multiple guest CPUs. Distro assets need byte
+ranges with stable ETags and no response compression. Leave Caddy encoding
+disabled for these routes if you add it elsewhere.
+
+### 5. Connect the browser and verify the deployment
+
+Open `https://vm.example.com/?wisp=wss%3A%2F%2Fvm.example.com%2Fwisp%2F` and
+sign in. For a saved browser preference, choose **System → Network →
+Wisp, custom servers**, enter `wss://vm.example.com/wisp/`, and use
+**Reboot to apply**. To make it the default for every new browser, set the
+relay URL in `DEFAULT_WISP_SERVERS` in [`js/core/net-wisp.ts`](js/core/net-wisp.ts)
+and rebuild the web app. The upstream default is restricted to approved
+origins.
+
+```sh
+curl -sSI https://vm.example.com/
+curl -fsSI -u vmadmin https://vm.example.com/
+image=$(find /opt/unkernel/current/public/distros -name 'debian-*.erofs' -printf '%f\n' | head -1)
+curl -fsS -u vmadmin -D - -o /dev/null -H 'Range: bytes=0-4095' \
+  "https://vm.example.com/distros/$image"
+```
+
+Expect `401` without credentials, `200` with credentials and both isolation
+headers, and `206 Partial Content` with a `Content-Range` for the distro
+request. Browser developer tools should show a `101 Switching Protocols`
+response at `/wisp/`. In Debian, run `curl -fsSL https://deb.debian.org/ -o /dev/null`
+to check guest DNS and HTTPS through the relay. For a full smoke test, boot
+Xfce, check that Terminal ↔ Desktop works, and reopen a disposable saved
+folder after a clean shutdown. A relay response of `401` points to login,
+`403` to the request’s Origin, and `502` to the relay service or its
+loopback port.
+
+For upgrades, build the next checkout, install it as a new versioned release,
+and switch the `current` link as in step 2. Coordinate a clean shutdown of
+active VMs before changing the served assets. Restart `unkernel-web` and run
+the checks again. To roll back, point `current` at the previous release and
+restart the web service. Keep the hostname stable so browsers retain access
+to the same origin’s IndexedDB. A locally chosen save folder can also be
+selected on the new origin. Inspect service logs with
+`journalctl -u unkernel-web -u unkernel-wisp -u caddy -f`.
+
+## About unkernel
 
 unkernel is Linux 7.x built as a single wasm module with a real MMU. The
 kernel (syscalls, scheduler, memory management, ext4, TCP/IP) is compiled
@@ -20,8 +294,7 @@ binaries, so Alpine and Debian packages run as they are.
 
 [Open a page](#-try-it-in-the-browser) and you have a Linux machine with a
 shell, a package manager, a persistent disk, internet access, and a screen
-with sound. It runs entirely on your device, with nothing to install and no
-server, and every layer is open source. [How it works](#-how-it-works)
+with sound. The VM runs on your device, and every layer is open source. [How it works](#-how-it-works)
 explains the design.
 
 <p align="center">
@@ -119,7 +392,7 @@ overlayfs, behaves as it does on a server, because it runs the same code.
 
 ## 🌐 Try it in the browser
 
-Open **[unkernel.dev](https://unkernel.dev/)**. A shell appears
+Open your [fork deployment](#deploy-on-a-server) or the [upstream demo](https://unkernel.dev/). A shell appears
 after a download of about 10 MB. Your changes are saved in the browser, and
 the status icon opens options, diagnostics, and export or reset for your
 disk. Ctrl-A n (or ⌘A n on a Mac) or `+` on the status line opens another
