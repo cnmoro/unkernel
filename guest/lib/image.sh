@@ -214,7 +214,8 @@ distro_erofs() {
 		fi
 	fi
 	if [ -s "$boot" ]; then
-		cat "$boot" "$warm" 2>/dev/null > "$out.first"
+		# No warm set (Alpine): the boot set alone.
+		{ cat "$boot"; [ ! -f "$warm" ] || cat "$warm"; } > "$out.first"
 		n=$(python3 -I "$guest/tools/mktree.py" --first "$out.first" "$tar" "$tar.tmp")
 		rm -f "$out.first"
 		mv "$tar.tmp" "$tar"
