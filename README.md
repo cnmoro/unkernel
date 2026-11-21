@@ -78,6 +78,8 @@ pnpm install --frozen-lockfile --prod=false
 KW_RELEASE=1 KW_DISTRO_FORMATS=erofs ./setup.sh
 test -s vendor/build/bundle/unkernel.wasm
 test -s vendor/build/distro/debian.erofs
+node guest/tools/vm-run.ts vendor/build/bundle/unkernel.wasm vendor/build/distro/debian.erofs --timeout 120 \
+  'test "$(cat /proc/1/comm)" = systemd && command -v systemctl && command -v Xtigervnc && command -v xfce4-session && test -e /sys/block/zram0/disksize'
 NITRO_PRESET=node-server KW_LOCAL=1 \
   KW_KERNEL="$PWD/vendor/build/bundle/unkernel.wasm" \
   KW_DISTROS="$PWD/vendor/build/distro" pnpm build:web
@@ -274,6 +276,14 @@ Xfce, check that Terminal ↔ Desktop works, and reopen a disposable saved
 folder after a clean shutdown. A relay response of `401` points to login,
 `403` to the request’s Origin, and `502` to the relay service or its
 loopback port.
+
+If Desktop shows `kwtty: exec systemctl: No such file or directory`, boot
+Debian in Terminal view and run `cat /proc/1/comm` and `command -v systemctl`.
+The fork image should return `systemd` and `/usr/bin/systemctl`. If the same
+check fails in a temporary session, verify the served distro image against
+the build in step 1 and redeploy the complete `web/.output/`. If it only
+fails with one saved disk, back it up and try Safe mode to isolate
+the saved root overlay.
 
 For upgrades, build the next checkout, install it as a new versioned release,
 and switch the `current` link as in step 2. Coordinate a clean shutdown of
