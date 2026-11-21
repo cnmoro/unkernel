@@ -24,6 +24,7 @@
 - **Crash recovery.** The folder store publishes completed write batches and commits a replacement checkpoint before pruning old files. Ext4 can replay its journal. A forced Chrome crash test recovered a previously synced file from the same folder in a fresh browser profile. Unflushed writes and interrupted application operations can still be lost or left incomplete. Use **Guest → Data disk → Export** for backups.
 - **More guest RAM and configurable zram.** **System → Memory** offers up to 4 GiB with smaller allocation fallbacks. **System → Compressed swap (zram)** defaults to half of usable guest RAM and supports fixed sizes or Off. An experimental Memory64 kernel booted Debian with 6 GiB in Chrome. The regular web build ships wasm32 and offers up to 4 GiB.
 - **Live host folder sharing.** **Guest → Shared folders → Share folder…** mounts a selected host folder under `/mnt/shared-<name>` for the current session. Shares are read-only by default. **Allow guest changes** enables writes and deletions on the host. Atomic renames, Unix ownership and permission changes, and links are unavailable. Unmount shared folders before suspending a VM.
+- **Faster disk reads over HTTP.** The browser reads ahead for sequential image access. Rebuilt Debian images also fetch commonly used APT and dpkg files after boot, subject to the browser’s Save-Data setting.
 - **Fork packaging.** The CLI and SDK fetch packaged distro assets from this fork, and the GitHub release workflow can publish fork assets without publishing to the upstream npm package. The fork includes checks for Debian’s systemd console and folder storage.
 
 ## Deploy on a server
@@ -146,7 +147,9 @@ checks that its hashed Debian asset matches the image you boot-tested.
 ```
 
 Keep the complete `web/.output/` tree together. It includes the app, both
-kernels and the distro images. For a separate build machine, archive it with
+kernels and the distro images. Rebuild the Debian image when its boot or APT
+prefetch layout changes so the served image carries the new hints. For a
+separate build machine, archive it with
 `tar -C web/.output -czf unkernel-web.tar.gz .` and transfer the archive.
 A matching fork GitHub release can also supply the kernel and image assets
 for a web build. In that case use
