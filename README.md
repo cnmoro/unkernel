@@ -40,7 +40,7 @@ user’s device, while the server serves the app and distro images and Wisp
 relays guest internet traffic. An open browser session is needed to keep that
 VM running. The web app can boot offline with `?net=0`.
 
-### 1. Build the fork’s production assets
+### 1. Build the fork kernel and Debian image
 
 Use Node.js 24 or newer, the repository’s pinned pnpm, Zig 0.16.x, and LLVM
 22 with the WebAssembly target. Put the tools on the build user’s `PATH`.
@@ -66,8 +66,9 @@ export PATH="/usr/lib/llvm-22/bin:$PATH"
 ```
 
 Install the pinned pnpm with `npm install --global pnpm@12.14.0` or with your
-Node toolchain’s package manager. Build as an unprivileged
-user from the exact fork commit you intend to deploy.
+Node toolchain’s package manager. Use a fresh checkout of the fork revision
+you intend to deploy. The kernel bundle and Debian image are generated files
+under `vendor/build/`. Run the following blocks from the repository root.
 
 ```sh
 git clone https://github.com/cnmoro/unkernel.git
@@ -75,16 +76,73 @@ cd unkernel
 git rev-parse HEAD
 pnpm install --frozen-lockfile --prod=false
 ./setup.sh --check
-KW_RELEASE=1 KW_DISTRO_FORMATS=erofs ./setup.sh
-test -s vendor/build/bundle/unkernel.wasm
-test -s vendor/build/distro/debian.erofs
-node guest/tools/vm-run.ts vendor/build/bundle/unkernel.wasm vendor/build/distro/debian.erofs --timeout 120 \
-  'test "$(cat /proc/1/comm)" = systemd && command -v systemctl && command -v Xtigervnc && command -v xfce4-session && test -e /sys/block/zram0/disksize'
-NITRO_PRESET=node-server KW_LOCAL=1 \
-  KW_KERNEL="$PWD/vendor/build/bundle/unkernel.wasm" \
-  KW_DISTROS="$PWD/vendor/build/distro" pnpm build:web
-test -f web/.output/server/index.mjs
-find web/.output/public/distros -maxdepth 1 -name '*.erofs'
+```
+
+#### Build the kernel bundle first
+
+The build scripts prepare and patch the linker and Linux source as needed.
+Build the single-CPU and SMP kernels, the ext4 data disk template, then the
+base initramfs and bundle. Debian’s image builder boots this bundle to install
+packages into the image.
+
+```sh
+(
+  set -eu
+  export KW_RELEASE=1
+  kernel/build.sh kernel
+  kernel/build.sh smp
+  KW_SMP=1 kernel/build.sh datadisk
+  KW_SMP=1 kernel/build.sh base
+  test -s vendor/build/bundle/unkernel.wasm
+)
+```
+
+#### Generate and boot-test the Debian image
+
+Build the Debian EROFS image and its index. The boot check confirms systemd is
+PID 1, the desktop tools exist, and the matching kernel exposes zram. Resolve
+any failure in this block before packaging the web app.
+
+```sh
+(
+  set -eu
+  test -s vendor/build/bundle/unkernel.wasm
+  KW_RELEASE=1 KW_DISTRO_FORMATS=erofs kernel/build.sh distro debian
+  test -s vendor/build/distro/debian.erofs
+  test -s vendor/build/distro/distros.json
+  node guest/tools/vm-run.ts \
+    vendor/build/bundle/unkernel.wasm vendor/build/distro/debian.erofs --timeout 120 \
+    'test "$(cat /proc/1/comm)" = systemd &&
+     command -v systemctl &&
+     command -v Xtigervnc &&
+     command -v xfce4-session &&
+     test -e /sys/block/zram0/disksize'
+)
+```
+
+To also offer Alpine in the web UI, run
+`KW_RELEASE=1 KW_DISTRO_FORMATS=erofs kernel/build.sh distro alpine` before
+packaging. This updates the index alongside the existing Debian image.
+
+### 2. Build the production web app from the verified files
+
+Set both build input paths explicitly. The production build packages its
+chosen kernel and distro images into `web/.output/`. The final comparison
+checks that its hashed Debian asset matches the image you boot-tested.
+
+```sh
+(
+  set -eu
+  bundle="$PWD/vendor/build/bundle/unkernel.wasm"
+  distros="$PWD/vendor/build/distro"
+  test -s "$bundle"
+  test -s "$distros/debian.erofs"
+  NITRO_PRESET=node-server KW_LOCAL=1 \
+    KW_KERNEL="$bundle" KW_DISTROS="$distros" pnpm build:web
+  test -s web/.output/server/index.mjs
+  debian_hash=$(sha256sum "$distros/debian.erofs" | cut -c1-16)
+  cmp "$distros/debian.erofs" "web/.output/public/distros/debian-$debian_hash.erofs"
+)
 ```
 
 Keep the complete `web/.output/` tree together. It includes the app, both
@@ -95,7 +153,7 @@ for a web build. In that case use
 `NITRO_PRESET=node-server KW_LOCAL=0 KW_KERNEL_REPO=cnmoro/unkernel KW_KERNEL_RELEASE="$fork_tag" pnpm build:web`, with `fork_tag` set to the published tag.
 Use the fork’s assets so Debian’s desktop, systemd setup and zram are included.
 
-### 2. Run the web app under systemd
+### 3. Run the web app under systemd
 
 Create a dedicated runtime user and copy the production output into a versioned,
 read-only deployment directory. Run these commands from the built checkout.
@@ -149,7 +207,7 @@ sudo systemctl enable --now unkernel-web
 curl -fsS -o /dev/null http://127.0.0.1:3000/
 ```
 
-### 3. Run the Wisp relay under systemd
+### 4. Run the Wisp relay under systemd
 
 Wisp accepts a WebSocket from the browser and multiplexes the guest’s outbound
 connections through it. Install the Wisp v1 relay in a dedicated Python
@@ -199,7 +257,7 @@ outbound TCP to the sites guests use. Protect public access to the relay with
 authentication or a private network. An Origin check alone does not
 authenticate a client.
 
-### 4. Put both services behind HTTPS
+### 5. Put both services behind HTTPS
 
 Install Caddy 2.8 or newer with its systemd service. Run `caddy hash-password`
 to generate the bcrypt hash for the user in the example. Add this site block
@@ -249,7 +307,7 @@ cross-origin isolation and multiple guest CPUs. Distro assets need byte
 ranges with stable ETags and no response compression. Leave Caddy encoding
 disabled for these routes if you add it elsewhere.
 
-### 5. Connect the browser and verify the deployment
+### 6. Connect the browser and verify the deployment
 
 Open `https://vm.example.com/?wisp=wss%3A%2F%2Fvm.example.com%2Fwisp%2F` and
 sign in. For a saved browser preference, choose **System → Network →
@@ -286,7 +344,7 @@ fails with one saved disk, back it up and try Safe mode to isolate
 the saved root overlay.
 
 For upgrades, build the next checkout, install it as a new versioned release,
-and switch the `current` link as in step 2. Coordinate a clean shutdown of
+and switch the `current` link as in step 3. Coordinate a clean shutdown of
 active VMs before changing the served assets. Restart `unkernel-web` and run
 the checks again. To roll back, point `current` at the previous release and
 restart the web service. Keep the hostname stable so browsers retain access
