@@ -355,6 +355,20 @@ to the same origin’s IndexedDB. A locally chosen save folder can also be
 selected on the new origin. Inspect service logs with
 `journalctl -u unkernel-web -u unkernel-wisp -u caddy -f`.
 
+## Use your own network with Local Wisp
+
+[Download Local Wisp](https://github.com/cnmoro/unkernel/releases/tag/local-wisp-v1.0.0)
+for Windows, macOS, or Linux. Extract and launch it on the computer running
+the browser. In Unkernel, open **System → Network → Wisp, custom servers**
+and enter `ws://127.0.0.1:8765/wisp/` as the only server. Click **Test local
+relay**, grant the site loopback permission if Chrome asks, then click
+**Reboot to apply**. Debian's internet traffic now uses your connection.
+The kernel and distro image still load from the website.
+
+The companion also supports `-tls` for WSS with locally generated TLS
+certificates and `-origin` for a different Unkernel site. See the
+[Local Wisp instructions](tools/local-wisp/README.md).
+
 ## About unkernel
 
 unkernel is Linux 7.x built as a single wasm module with a real MMU. The

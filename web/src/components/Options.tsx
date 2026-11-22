@@ -15,7 +15,7 @@
 // change: React drops an event whose value was set from script (autofill,
 // the browser tests), and the store would miss it. A check box stores its
 // data-on or data-off value, so the options keep the values nextSettings() reads.
-import { useEffect, useRef, type ChangeEvent, type KeyboardEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ChangeEvent, type KeyboardEvent, type ReactNode } from "react";
 import { DEFAULT_CMDLINE, DEFAULT_DISTRO, DISTROS_OFFERED, webkitEngine } from "../config.ts";
 import { MAX_BROWSER_MEMORY_MIB } from "../sdk.ts";
 import { KW } from "../kw.ts";
@@ -123,6 +123,49 @@ const ZRAM_SIZES = [0, 64, 128, 256, 512, 1024, 1536, 2048, 3072, 4096];
 const CPU_COUNTS = [1, 2, 4, 8, 16];
 const FONTS = [11, 12, 13, 14, 15, 16, 18];
 
+function LocalWisp({ value }: { value: string }) {
+	const [result, setResult] = useState("");
+	const pending = useRef<(() => void) | null>(null);
+	useEffect(() => () => pending.current?.(), []);
+
+	let endpoint: URL | undefined;
+	try {
+		const url = new URL(value.trim());
+		if (["localhost", "127.0.0.1", "[::1]"].includes(url.hostname) && ["ws:", "wss:"].includes(url.protocol) && !value.includes(",")) endpoint = url;
+	} catch { /* only a complete WebSocket URL can be tested */ }
+
+	function testRelay() {
+		if (!endpoint) return;
+		let ws: WebSocket;
+		try { ws = new WebSocket(endpoint); }
+		catch { setResult("Could not open this WebSocket URL."); return; }
+		ws.binaryType = "arraybuffer";
+		setResult("Connecting. Allow loopback access if your browser asks.");
+		const failed = "Could not connect. Start the relay, check the URL, and allow loopback access in browser site settings. For WSS, trust the relay certificate.";
+		const cleanup = () => {
+			clearTimeout(timeout);
+			ws.onmessage = ws.onerror = ws.onclose = null;
+			ws.close();
+			pending.current = null;
+		};
+		const finish = (message: string) => { cleanup(); setResult(message); };
+		const timeout = window.setTimeout(() => finish(failed), 45_000);
+		pending.current = cleanup;
+		ws.onerror = ws.onclose = () => finish(failed);
+		ws.onmessage = ({ data }) => {
+			const packet = data instanceof ArrayBuffer ? new DataView(data) : null;
+			const ready = packet && packet.byteLength >= 9 && packet.getUint8(0) === 3 && packet.getUint32(1, true) === 0;
+			finish(ready ? "Local relay is ready. Reboot to apply." : "This endpoint did not send a Wisp handshake.");
+		};
+	}
+
+	return <div className="col-span-full flex flex-wrap items-center gap-2 text-[11.5px]">
+		<a className="underline" href="https://github.com/cnmoro/unkernel/releases/tag/local-wisp-v1.0.0" target="_blank" rel="noreferrer">Download Local Wisp</a>
+		{endpoint && <button type="button" className="btn btn-sm" onClick={testRelay} disabled={!!pending.current}>Test local relay</button>}
+		{result && <span role="status" className="basis-full text-muted">{result}</span>}
+	</div>;
+}
+
 export function Options() {
 	const ui = KW.ui!, cfg = KW.config;
 	const o = useStore((s) => s.options);
@@ -205,6 +248,7 @@ export function Options() {
 				<input id="opt-wisp" name="wisp" type="text" inputMode="url" placeholder="wss://wisp.example.com/" autoCapitalize="off" autoComplete="off" spellCheck={false}
 					value={o.wisp} onChange={onField} onKeyDown={enter} className="field h-8 px-2.5 text-[12.5px]" />
 			</Field>
+			{o.net === "custom" && <LocalWisp key={o.wisp} value={o.wisp} />}
 
 			<fieldset className="col-span-full flex flex-col gap-1.5">
 				<legend className="mb-1.5 text-[11.5px] text-faint">Distro</legend>
