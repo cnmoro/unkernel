@@ -123,7 +123,7 @@ const ZRAM_SIZES = [0, 64, 128, 256, 512, 1024, 1536, 2048, 3072, 4096];
 const CPU_COUNTS = [1, 2, 4, 8, 16];
 const FONTS = [11, 12, 13, 14, 15, 16, 18];
 
-function LocalWisp({ value }: { value: string }) {
+function LocalWispTest({ value }: { value: string }) {
 	const [result, setResult] = useState("");
 	const pending = useRef<(() => void) | null>(null);
 	useEffect(() => () => pending.current?.(), []);
@@ -159,9 +159,9 @@ function LocalWisp({ value }: { value: string }) {
 		};
 	}
 
-	return <div className="col-span-full flex flex-wrap items-center gap-2 text-[11.5px]">
-		<a className="underline" href="https://github.com/cnmoro/unkernel/releases/tag/local-wisp-v1.0.0" target="_blank" rel="noreferrer">Download Local Wisp</a>
-		{endpoint && <button type="button" className="btn btn-sm" onClick={testRelay} disabled={!!pending.current}>Test local relay</button>}
+	if (!endpoint) return null;
+	return <div className="flex flex-wrap items-center gap-2 text-[11.5px]">
+		<button type="button" className="btn btn-sm" onClick={testRelay} disabled={!!pending.current}>Test local relay</button>
 		{result && <span role="status" className="basis-full text-muted">{result}</span>}
 	</div>;
 }
@@ -243,12 +243,19 @@ export function Options() {
 					<Radio id="opt-net-custom" name="net" value="custom" current={o.net} label="Wisp, custom servers" />
 					<Radio id="opt-net-off" name="net" value="off" current={o.net} label="Off" />
 				</div>
+				<p className="text-[11.5px] leading-relaxed text-muted">
+					<a className="text-fg underline" href="https://github.com/cnmoro/unkernel/releases/tag/local-wisp-v1.0.0" target="_blank" rel="noreferrer">Download Local Wisp</a>
+					{" to use your computer’s internet connection. Extract and launch the relay, choose "}
+					<strong>Wisp, custom servers</strong>, and enter <code className="break-all text-fg">ws://127.0.0.1:8765/wisp/</code> as the only URL.
+					{" Select "}<strong>Test local relay</strong>, allow loopback access if prompted, then select <strong>Reboot to apply</strong>.
+					{" Keep the relay running while you use the VM."}
+				</p>
+				<Field label="Wisp servers (comma-separated)" id="opt-wisp-row" hidden={o.net !== "custom"}>
+					<input id="opt-wisp" name="wisp" type="text" inputMode="url" placeholder="wss://wisp.example.com/" autoCapitalize="off" autoComplete="off" spellCheck={false}
+						value={o.wisp} onChange={onField} onKeyDown={enter} className="field h-8 px-2.5 text-[12.5px]" />
+				</Field>
+				{o.net === "custom" && <LocalWispTest key={o.wisp} value={o.wisp} />}
 			</fieldset>
-			<Field label="Wisp servers (comma-separated)" wide id="opt-wisp-row" hidden={o.net !== "custom"}>
-				<input id="opt-wisp" name="wisp" type="text" inputMode="url" placeholder="wss://wisp.example.com/" autoCapitalize="off" autoComplete="off" spellCheck={false}
-					value={o.wisp} onChange={onField} onKeyDown={enter} className="field h-8 px-2.5 text-[12.5px]" />
-			</Field>
-			{o.net === "custom" && <LocalWisp key={o.wisp} value={o.wisp} />}
 
 			<fieldset className="col-span-full flex flex-col gap-1.5">
 				<legend className="mb-1.5 text-[11.5px] text-faint">Distro</legend>
